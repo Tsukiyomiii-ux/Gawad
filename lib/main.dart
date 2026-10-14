@@ -94,17 +94,18 @@ class _PayrollHomePageState extends State<PayrollHomePage> {
     }
   }
 
-  Future<void> _openScanner() async {
-    final String? rawResult = await Navigator.push<String>(
+Future<void> _openScanner() async {
+    // 1. Tell the Navigator to expect a TanodPerson, not a String
+    final TanodPerson? newPerson = await Navigator.push<TanodPerson>(
       context,
       MaterialPageRoute(
         builder: (context) => const PhilsysScannerView(),
       ),
     );
 
-    if (rawResult != null && mounted) {
-      final newPerson = TanodPerson.fromJsonString(rawResult);
-
+    // 2. Since the scanner already built the person (and attached photos), 
+    // we don't need fromJsonString here anymore. We just add it directly!
+    if (newPerson != null && mounted) {
       setState(() {
         _scannedTanods.add(newPerson);
       });

@@ -19,8 +19,8 @@ class TanodPerson {
 
   /// Flattened card photos from the OCR scanner (null for QR scans).
   /// Used by Template 4: ID Photocopy.
-  final Uint8List? idFront;
-  final Uint8List? idBack;
+  Uint8List? idFront;
+  Uint8List? idBack;
 
   /// True if this person came from the OCR (no-internet) scanner.
   final bool scannedByOcr;
@@ -86,7 +86,8 @@ class TanodPerson {
     return parts.isEmpty ? 'N/A' : parts.join(' ');
   }
 
-  factory TanodPerson.fromJsonString(String raw) {
+  // Notice we added {Uint8List? idFront, Uint8List? idBack} right here:
+  factory TanodPerson.fromJsonString(String raw, {Uint8List? idFront, Uint8List? idBack}) {
     try {
       final Map<String, dynamic> map = jsonDecode(raw);
       final Map<String, dynamic> data = map['data'] is Map<String, dynamic>
@@ -97,7 +98,6 @@ class TanodPerson {
       String brgy = (data['barangay'] ?? data['brgy'] ?? '').toString().trim();
       String muni = (data['municipality'] ?? data['city'] ?? '').toString().trim();
 
-      // Extract barangay & municipality from address string if not isolated
       if (brgy.isEmpty && addr.isNotEmpty) {
         final tokens = addr.split(',');
         if (tokens.isNotEmpty) {
@@ -120,8 +120,13 @@ class TanodPerson {
         rawAddress: addr.isNotEmpty ? addr : '$brgy, $muni',
         barangay: brgy.isNotEmpty ? brgy.toUpperCase() : 'ARIPDIP',
         municipality: muni.isNotEmpty ? muni.toUpperCase() : 'SAN RAFAEL',
+        // Pass the images directly into the locked object here:
+        idFront: idFront,
+        idBack: idBack,
+        scannedByOcr: false,
       );
     } catch (_) {
+      // Fallback if plain text is scanned
       return TanodPerson(
         pcn: 'N/A',
         firstName: raw,
@@ -134,6 +139,9 @@ class TanodPerson {
         rawAddress: 'Aripdip, San Rafael',
         barangay: 'ARIPDIP',
         municipality: 'SAN RAFAEL',
+        idFront: idFront,
+        idBack: idBack,
+        scannedByOcr: false,
       );
     }
   }
