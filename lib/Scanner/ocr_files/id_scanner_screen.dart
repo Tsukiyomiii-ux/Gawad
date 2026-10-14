@@ -10,7 +10,16 @@ import 'id_image_tools.dart';
 /// OCR scanner (used when there is no internet).
 /// Pops a [TanodPerson] back to the masterlist when "Confirm Details" is tapped.
 class IdScannerScreen extends StatefulWidget {
-  const IdScannerScreen({super.key});
+  /// MERGE (Gawad): the signed-in barangay's area. Used when the address on
+  /// the card can't be read, so the scan isn't blocked.
+  final String fallbackBarangay;
+  final String fallbackMunicipality;
+
+  const IdScannerScreen({
+    super.key,
+    this.fallbackBarangay = '',
+    this.fallbackMunicipality = '',
+  });
 
   @override
   State<IdScannerScreen> createState() => _IdScannerScreenState();
@@ -219,14 +228,14 @@ class _IdScannerScreenState extends State<IdScannerScreen> {
     final last = _lastNameController.text.trim();
     final address = _addressController.text.trim();
     final parts = _addressParts;
-    final brgy = parts.barangay;
-    final muni = parts.municipality;
+    final brgy = parts.barangay.isNotEmpty ? parts.barangay : widget.fallbackBarangay;
+    final muni = parts.municipality.isNotEmpty ? parts.municipality : widget.fallbackMunicipality;
 
     final missing = <String>[
       if (first.isEmpty) 'First Name',
       if (last.isEmpty) 'Last Name',
-      if (address.isEmpty) 'Address',
-      if (address.isNotEmpty && (brgy.isEmpty || muni.isEmpty))
+      if (address.isEmpty && widget.fallbackBarangay.isEmpty) 'Address',
+      if (brgy.isEmpty || muni.isEmpty)
         'Barangay/Municipality in the address (write it like "PUROK 1, ARIPDIP, SAN RAFAEL, ILOILO")',
       if (_frontCard == null) 'Front scan',
       if (_backCard == null) 'Back scan',

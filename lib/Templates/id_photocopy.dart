@@ -108,6 +108,23 @@ class IdPhotocopy {
             caption,
             style: const pw.TextStyle(fontSize: 8, color: PdfColors.grey700),
           ),
+          // MERGE (Gawad): each ID copy is signed three (3) times by the tanod
+          pw.SizedBox(height: 10 * PdfPageFormat.mm),
+          for (var i = 1; i <= 3; i++)
+            pw.Padding(
+              padding: const pw.EdgeInsets.only(top: 9 * PdfPageFormat.mm),
+              child: pw.Row(
+                mainAxisAlignment: pw.MainAxisAlignment.center,
+                crossAxisAlignment: pw.CrossAxisAlignment.end,
+                children: [
+                  pw.Text('$i.', style: const pw.TextStyle(fontSize: 9)),
+                  pw.SizedBox(width: 6),
+                  pw.Container(width: 70 * PdfPageFormat.mm, height: 0.7, color: PdfColors.black),
+                ],
+              ),
+            ),
+          pw.SizedBox(height: 2 * PdfPageFormat.mm),
+          pw.Text('Signature of tanod', style: const pw.TextStyle(fontSize: 8, color: PdfColors.grey700)),
         ],
       ),
     );
