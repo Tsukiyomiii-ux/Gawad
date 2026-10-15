@@ -9,6 +9,7 @@ import 'package:tanod_incentives/Templates/gawad_pdf.dart'; // MERGE: real PDFs
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
+import 'package:tanod_incentives/widgets/notify.dart'; // top pop-ups
 
 export 'package:tanod_incentives/data/doc_kind.dart';
 
@@ -121,11 +122,8 @@ Future<void> shareSignedCopy(BuildContext context, BrgyRecord rec, DocKind k) as
   final f = rec.files[k]!;
   final bytes = f.bytes;
   if (bytes == null) {
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      content: Text(tr('This is demo data. Upload a real copy first.', 'Demo data ito. Mag-upload muna ng totoong kopya.',
-          'Demo data ini. Palihog mag-upload anay sang matuod nga kopya.')),
-      behavior: SnackBarBehavior.floating,
-    ));
+    notify(context, tr('This is demo data. Upload a real copy first.', 'Demo data ito. Mag-upload muna ng totoong kopya.',
+        'Demo data ini. Palihog mag-upload anay sang matuod nga kopya.'), type: NotifyType.warning);
     return;
   }
   var pdfBytes = bytes;

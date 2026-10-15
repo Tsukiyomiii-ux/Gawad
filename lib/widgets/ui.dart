@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
 
 import 'package:tanod_incentives/theme.dart';
+import 'package:tanod_incentives/widgets/notify.dart';
+
+export 'package:tanod_incentives/widgets/notify.dart'; // so screens using ui.dart get notify() too
 
 // Shared building blocks for the municipality and OPPDC screens.
 
@@ -9,11 +12,7 @@ Widget logoMark(double s) => Container(
       height: s,
       alignment: Alignment.center,
       decoration: BoxDecoration(color: C.yellow, borderRadius: BorderRadius.circular(s * .3)),
-           child: ClipRRect(
-        borderRadius: BorderRadius.circular(s * .3),
-        child: Image.asset('assets/logo.png', width: s, height: s, fit: BoxFit.cover,
-            errorBuilder: (_, __, ___) => Text('G', style: serif(s * .55))),
-      ),
+      child: Text('G', style: serif(s * .55)),
     );
 
 Widget pill(String text, Color bg, Color fg, {IconData? icon}) => Container(
@@ -52,9 +51,9 @@ void showExplain(BuildContext context, String title, String body) {
   );
 }
 
-void toast(BuildContext context, String message) => ScaffoldMessenger.of(context)
-  ..hideCurrentSnackBar()
-  ..showSnackBar(SnackBar(content: Text(message), behavior: SnackBarBehavior.floating));
+// Now a colored pop-up at the TOP of the screen (see widgets/notify.dart)
+void toast(BuildContext context, String message, {NotifyType type = NotifyType.success, String? title}) =>
+    notify(context, message, type: type, title: title);
 
 // White rounded card with an optional title row.
 class Panel extends StatelessWidget {

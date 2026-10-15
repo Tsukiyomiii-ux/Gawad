@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'package:tanod_incentives/theme.dart';
+import 'package:tanod_incentives/widgets/notify.dart'; // top pop-ups
 import 'package:tanod_incentives/data/demo_data.dart';
 import 'package:tanod_incentives/widgets/app_field.dart';
 // MERGE: real scanners instead of the mock reader
@@ -86,12 +87,13 @@ class _ScanFlowPageState extends State<ScanFlowPage> with SingleTickerProviderSt
 
     if (person == null) {
       setState(() => step = _Step.capture);
-      ScaffoldMessenger.of(context)
-        ..hideCurrentSnackBar()
-        ..showSnackBar(const SnackBar(
-          content: Text('No ID was read. Try again, or type the details instead.'),
-          behavior: SnackBarBehavior.floating,
-        ));
+      notify(
+        context,
+        tr('No ID was read. Try again, or type the details instead.', 'Walang nabasang ID. Subukan ulit, o i-type na lang.',
+            'Wala sing nabasa nga ID. Tilawi liwat, ukon i-type na lang.'),
+        type: NotifyType.warning,
+        title: tr('Scan didn’t work', 'Hindi nabasa', 'Wala nabasa'),
+      );
       return;
     }
 
@@ -105,6 +107,15 @@ class _ScanFlowPageState extends State<ScanFlowPage> with SingleTickerProviderSt
       checked = false;
       step = _Step.confirm;
     });
+    notify(
+      context,
+      person.hasIdPhotos
+          ? tr('ID photos saved. Check the name against the card, then save.', 'Na-save ang litrato ng ID. Ikumpara ang pangalan sa ID, saka i-save.',
+              'Na-save ang litrato sang ID. Ikumpara ang ngalan sa ID, dayon i-save.')
+          : tr('Details read from the QR code. Check the name, then save.', 'Nabasa ang detalye mula sa QR code. Suriin ang pangalan, saka i-save.',
+              'Nabasa ang detalye halin sa QR code. Usisaa ang ngalan, dayon i-save.'),
+      title: tr('ID scanned', 'Na-scan ang ID', 'Na-scan ang ID'),
+    );
   }
 
   // Barangay named on the ID's address, if it could be read.
@@ -135,11 +146,13 @@ class _ScanFlowPageState extends State<ScanFlowPage> with SingleTickerProviderSt
       idFront: manual ? null : s?.idFront,
       idBack: manual ? null : s?.idBack,
     );
-    final msg = 'Saved ${t.fullName} as award no. ${nextIndex.toString().padLeft(3, '0')}.';
+    final no = nextIndex.toString().padLeft(3, '0');
     setState(() => saved.add(t));
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(SnackBar(content: Text(msg), behavior: SnackBarBehavior.floating));
+    notify(
+      context,
+      tr('Saved ${t.fullName} as award no. $no.', 'Na-save si ${t.fullName} bilang award no. $no.', 'Na-save si ${t.fullName} bilang award no. $no.'),
+      title: tr('Tanod saved', 'Na-save ang tanod', 'Na-save ang tanod'),
+    );
     if (next && slotsLeft > 0) {
       setState(() => step = _Step.capture);
     } else {
@@ -446,8 +459,8 @@ class _ScanFlowPageState extends State<ScanFlowPage> with SingleTickerProviderSt
             ]),
             const SizedBox(height: 20),
             Wrap(alignment: WrapAlignment.center, spacing: 12, runSpacing: 12, children: [
+              // One button: QR scan when online, OCR photo scan when offline (automatic)
               _primary('Scan ID', Icons.photo_camera_outlined, () => _capture()),
-              _secondary('Photo scan (offline)', Icons.document_scanner_outlined, () => _capture(ScanMethod.ocr)),
             ]),
             const SizedBox(height: 10),
             Center(

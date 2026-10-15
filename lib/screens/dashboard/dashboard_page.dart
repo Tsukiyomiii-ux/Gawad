@@ -1,3 +1,4 @@
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
 
 import 'package:tanod_incentives/theme.dart';
@@ -6,10 +7,14 @@ import 'package:tanod_incentives/data/store.dart';
 import 'package:tanod_incentives/widgets/app_field.dart';
 import 'package:tanod_incentives/widgets/chat_thread.dart';
 import 'package:tanod_incentives/widgets/upload_sheet.dart';
+import 'package:tanod_incentives/widgets/notify.dart'; // top pop-ups + "Are you sure?"
 import 'package:tanod_incentives/screens/auth/auth_page.dart';
 import 'package:tanod_incentives/screens/dashboard/documents_view.dart';
 import 'package:tanod_incentives/screens/scan/scan_flow_page.dart';
 import 'package:tanod_incentives/Templates/gawad_pdf.dart'; // MERGE: real PDFs
+import 'package:flutter/foundation.dart' show compute;
+import 'package:camera/camera.dart' show XFile;
+import 'package:tanod_incentives/Scanner/id_camera_screen.dart'; // retake ID photos
 
 // Barangay representative dashboard.
 // Pages: Overview, Tanods, Documents, Messages, Account, Help.
@@ -76,10 +81,10 @@ const _stepCount = 5;
 
 String _stepName(int i) => [
       tr('Preparing', 'Inihahanda', 'Ginahanda'),
-      tr('With $kMunicipality', 'Nasa $kMunicipality', 'Ara sa $kMunicipality'),
-      tr('Checked', 'Nasuri na', 'Nausisa na'),
-      tr('With OPPDC', 'Nasa OPPDC', 'Ara sa OPPDC'),
-      tr('Released', 'Na-release', 'Na-release na'),
+      tr('Shared to Municipality', 'Naibahagi sa Munisipyo', 'Napaambit sa Munisipyo'),
+      tr('Municipality Reviewing', 'Sinusuri ng Munisipyo', 'Ginausisa sang Munisipyo'),
+      tr('OPPDC Reviewing', 'Sinusuri ng OPPDC', 'Ginausisa sang OPPDC'),
+      tr('Released', 'Na-release', 'Na-release'),
     ][i];
 
 class _Issue {
@@ -108,7 +113,12 @@ String peso(int v) {
 
 String awardNo(int index) => (index + 1).toString().padLeft(3, '0');
 
+// Which tanods the Tanods list shows (set by the View buttons on the Overview tiles)
+enum _TanodFilter { all, completed, misspelled, duplicate }
+
 class _DashboardPageState extends State<DashboardPage> {
+  _TanodFilter _filter = _TanodFilter.all;
+
   final Set<String> resolved = {};
   int navIndex = 0;
   bool online = false;
@@ -121,11 +131,10 @@ class _DashboardPageState extends State<DashboardPage> {
   bool get corrections => rec.status == BrgyStatus.corrections;
 
   // Position on the 5-step tracker.
-  int get stage => switch (rec.status) {
+   int get stage => switch (rec.status) {
         BrgyStatus.notStarted || BrgyStatus.preparing => 0,
-        BrgyStatus.submitted || BrgyStatus.corrections => 1,
-        BrgyStatus.checked => 2,
-        BrgyStatus.sentToOppdc => 3,
+        BrgyStatus.submitted || BrgyStatus.corrections => 2, // shared; municipality reviewing
+        BrgyStatus.checked || BrgyStatus.sentToOppdc => 3, // reviewed; OPPDC next
         BrgyStatus.released => 4,
       };
 
@@ -226,21 +235,60 @@ class _DashboardPageState extends State<DashboardPage> {
   }
 
   // ---------- actions ----------
-  void _toast(String m) => ScaffoldMessenger.of(context)
-    ..hideCurrentSnackBar()
-    ..showSnackBar(SnackBar(content: Text(m), behavior: SnackBarBehavior.floating));
+  // Every notice now shows as a colored pop-up at the TOP (widgets/notify.dart)
+  void _toast(String m, [NotifyType type = NotifyType.success, String? title, VoidCallback? onTap]) =>
+      notify(context, m, type: type, title: title, onTap: onTap);
 
-  void _signOut() => Navigator.of(context).pushReplacement(MaterialPageRoute(builder: (_) => const AuthPage()));
+  @override
+  void initState() {
+    super.initState();
+    // Welcome + unread messages right after signing in
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      if (rec.unreadBrgy > 0) {
+        _toast(
+          tr('You have ${rec.unreadBrgy} new message${rec.unreadBrgy == 1 ? '' : 's'} from $kMunicipality.',
+              'May ${rec.unreadBrgy} bagong mensahe mula sa $kMunicipality.', 'May ${rec.unreadBrgy} ka bag-o nga mensahe halin sa $kMunicipality.'),
+          NotifyType.info,
+          tr('New message', 'Bagong mensahe', 'Bag-o nga mensahe'),
+          () {
+            if (mounted) _go(_messagesTab); // tap the pop-up -> open Messages
+          },
+        );
+      } else {
+        _toast(tr('Signed in to Brgy. $kBarangay.', 'Naka-sign in sa Brgy. $kBarangay.', 'Naka-sign in sa Brgy. $kBarangay.'), NotifyType.info,
+            tr('Welcome!', 'Maligayang pagdating!', 'Maayong pag-abot!'));
+      }
+    });
+  }
+
+  Future<void> _signOut() async {
+    final ok = await confirmAction(
+      context,
+      title: tr('Sign out?', 'Mag-sign out?', 'Mag-sign out?'),
+      message: tr('You can sign back in any time.', 'Puwede kang mag-sign in ulit kahit kailan.', 'Puwede ka liwat mag-sign in bisan san-o.'),
+      confirmLabel: tr('Sign out', 'Mag-sign out', 'Mag-sign out'),
+      icon: Icons.logout_rounded,
+      danger: true,
+    );
+    if (!ok || !mounted) return;
+    _toast(tr('You have signed out.', 'Naka-sign out ka na.', 'Naka-sign out ka na.'), NotifyType.info, tr('Signed out', 'Naka-sign out', 'Naka-sign out'));
+    Navigator.of(context).pushReplacement(MaterialPageRoute(builder: (_) => const AuthPage()));
+  }
 
   void _go(int i) => setState(() {
         navIndex = i;
         if (i == _messagesTab) rec.unreadBrgy = 0;
       });
 
-  void _sync() => setState(() {
-        online = true;
-        pendingSync = 0;
-      });
+  void _sync() {
+    setState(() {
+      online = true;
+      pendingSync = 0;
+    });
+    _toast(tr('All changes are saved online.', 'Naka-save na online ang lahat ng pagbabago.', 'Naka-save na online ang tanan nga pagbag-o.'), NotifyType.success,
+        tr('Synced', 'Na-sync', 'Na-sync'));
+  }
 
   // The tanod list or signatories changed: signed copies no longer match.
   void _markChanged() {
@@ -252,13 +300,21 @@ class _DashboardPageState extends State<DashboardPage> {
   }
 
   void _quotaToast() => _toast(tr('Limit reached: OPPDC allows $kQuota tanods for Brgy. $kBarangay this year.',
-      'Puno na: $kQuota tanod lang ang puwede sa Brgy. $kBarangay ngayong taon.', 'Puno na ang listahan: $kQuota ka tanod lang ang gintugot sang OPPDC para sa Brgy. $kBarangay subong nga tuig.'));
+      'Puno na: $kQuota tanod lang ang puwede sa Brgy. $kBarangay ngayong taon.', 'Puno na ang listahan: $kQuota ka tanod lang ang gintugot sang OPPDC para sa Brgy. $kBarangay subong nga tuig.'),
+      NotifyType.warning, tr('Limit reached', 'Puno na', 'Puno na'));
 
   void _lockedToast() => _toast(tr('Your set is with $kMunicipality, so the tanod list is locked for now.',
-      'Nasa $kMunicipality ang inyong set kaya naka-lock muna ang listahan.', 'Ara pa sa $kMunicipality ang inyo set, gani naka-lock anay ang listahan sang tanod.'));
+      'Nasa $kMunicipality ang inyong set kaya naka-lock muna ang listahan.', 'Ara pa sa $kMunicipality ang inyo set, gani naka-lock anay ang listahan sang tanod.'),
+      NotifyType.warning, tr('List locked', 'Naka-lock', 'Naka-lock'));
 
   // MERGE: opens the real, filled PDF (print / share / save)
-  void _downloadPdf(DocKind k) => showOfficialPdf(context, rec, k);
+  void _downloadPdf(DocKind k) {
+    if (tanods.isNotEmpty) {
+      _toast(tr('Opening the ${k.title}…', 'Binubuksan ang ${k.title}…', 'Ginabuksan ang ${k.title}…'), NotifyType.info,
+          tr('Preparing PDF', 'Inihahanda ang PDF', 'Ginahanda ang PDF'));
+    }
+    showOfficialPdf(context, rec, k);
+  }
 
   Future<void> _upload(DocKind k) async {
     final f = rec.files[k]!;
@@ -290,7 +346,8 @@ class _DashboardPageState extends State<DashboardPage> {
         ? tr('Corrected ${k.title} uploaded. Bring the corrected paper to $kMunicipality too.',
             'Na-upload ang naitamang ${k.title}. Dalhin din ang naitamang papel sa $kMunicipality.', 'Na-upload na ang natadlong nga ${k.title}. Palihog dal-a man ang natadlong nga papel sa $kMunicipality.')
         : tr('Signed ${k.title} uploaded. It replaces the file and is your backup.',
-            'Na-upload ang pirmadong ${k.title}. Papalitan nito ang file at ito ang inyong backup.', 'Na-upload na ang may pirma nga ${k.title}. Amo na ini ang inyo backup.'));
+            'Na-upload ang pirmadong ${k.title}. Papalitan nito ang file at ito ang inyong backup.', 'Na-upload na ang may pirma nga ${k.title}. Amo na ini ang inyo backup.'),
+        NotifyType.success, tr('Upload saved', 'Na-save ang upload', 'Na-save ang upload'));
   }
 
   Future<void> _scanId() async {
@@ -436,47 +493,35 @@ class _DashboardPageState extends State<DashboardPage> {
         'Naidagdag si ${added.fullName} bilang award no. ${awardNo(tanods.length - 1)}.', 'Nadugang si ${added.fullName} bilang award no. ${awardNo(tanods.length - 1)}.'));
   }
 
-  Future<bool> _confirm(String title, String body, String action) async {
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: Colors.white,
-        surfaceTintColor: Colors.white,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        title: Text(title, style: serif(24)),
-        content: Text(body, style: sans(15.5, color: C.muted, h: 1.5)),
-        actionsPadding: const EdgeInsets.fromLTRB(24, 0, 24, 20),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: Text(tr('Not yet', 'Hindi pa', 'Indi pa'), style: sans(14.5, w: FontWeight.w600, color: C.muted)),
-          ),
-          FilledButton(
-            style: FilledButton.styleFrom(backgroundColor: C.navy, foregroundColor: Colors.white, minimumSize: const Size(0, 46)),
-            onPressed: () => Navigator.pop(ctx, true),
-            child: Text(action),
-          ),
-        ],
-      ),
-    );
-    return ok == true;
-  }
+  Future<bool> _confirm(String title, String body, String action) => confirmAction(
+        context,
+        title: title,
+        message: body,
+        confirmLabel: action,
+        cancelLabel: tr('Not yet', 'Hindi pa', 'Indi pa'),
+        icon: Icons.send_rounded,
+      );
 
-  Future<void> _submit() async {
+   Future<void> _submit() async {
     final ok = await _confirm(
-      tr('Submit to $kMunicipality?', 'Ipasa sa $kMunicipality?', 'Ipasa sa $kMunicipality?'),
-      tr('Your 4 signed copies are uploaded as the backup. Bring the signed paper set to the MLGOO office in $kMunicipality. '
-              'The reviewer checks the paper and will message you here if anything needs fixing.',
-          'Na-upload na ang 4 na pirmadong kopya bilang backup. Dalhin ang pirmadong papel sa tanggapan ng MLGOO sa $kMunicipality. '
-              'Susuriin ng reviewer ang papel at magme-message dito kung may kailangang ayusin.', 'Na-upload na ang 4 ka may pirma nga kopya bilang backup. Palihog dal-a ang may pirma nga papel sa opisina sang MLGOO sa $kMunicipality. ' 'Usisaon sang reviewer ang papel kag magmensahe sila diri kon may kinahanglan tadlungon.'),
-      tr('Submit', 'Ipasa', 'Ipasa'),
+      tr('Share to Municipality?', 'Ibahagi sa Munisipyo?', 'Ipaambit sa Munisipyo?'),
+      tr('The Municipality will be able to open the softcopies of all 4 documents. Then bring the signed paper set to the '
+              'MLGOO office; the reviewer checks the paper and will message you here if anything needs fixing.',
+          'Mabubuksan ng Munisipyo ang softcopy ng 4 na dokumento. Saka dalhin ang pirmadong papel sa tanggapan ng MLGOO; '
+              'susuriin ng reviewer ang papel at magme-message dito kung may kailangang ayusin.',
+          'Mabuksan sang Munisipyo ang softcopy sang 4 ka dokumento. Dayon dal-a ang may pirma nga papel sa opisina sang MLGOO; '
+              'usisaon sang reviewer ang papel kag magmensahe diri kon may kinahanglan tadlungon.'),
+      tr('Share', 'Ibahagi', 'Ipaambit'),
     );
     if (!ok || !mounted) return;
     setState(() {
       rec.status = BrgyStatus.submitted;
-      rec.post(fromMunicipality: false, system: true, text: 'Submitted. The paper set will be brought to the municipal office.');
+      rec.post(fromMunicipality: false, system: true, text: 'Shared all documents. The paper set will be brought to the municipal office.');
     });
-    _toast(tr('Submitted. Bring the paper set to $kMunicipality.', 'Naipasa. Dalhin ang papel sa $kMunicipality.', 'Napasa na. Palihog dal-a ang papel sa $kMunicipality.'));
+    _toast(tr('Shared to Municipality. Bring the paper set to the MLGOO office.',
+        'Naibahagi sa Munisipyo. Dalhin ang papel sa tanggapan ng MLGOO.',
+        'Napaambit sa Munisipyo. Dal-a ang papel sa opisina sang MLGOO.'),
+        NotifyType.success, tr('Shared!', 'Naibahagi!', 'Napaambit!'));
   }
 
   Future<void> _sendBack() async {
@@ -719,6 +764,8 @@ class _DashboardPageState extends State<DashboardPage> {
         gap,
         _stats(),
         gap,
+        _tanodPanel(limit: 6), // moved up, under the stat tiles
+        gap,
         if (two)
           Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
             Expanded(flex: 3, child: _backupPanel()),
@@ -732,8 +779,6 @@ class _DashboardPageState extends State<DashboardPage> {
           gap,
           _messagesPreview(),
         ],
-        gap,
-        _tanodPanel(limit: 6),
         gap,
         _submitPanel(),
       ]);
@@ -848,10 +893,12 @@ class _DashboardPageState extends State<DashboardPage> {
           'Handa na ang lahat. Maipapasa ninyo kapag naaprubahan na ang inyong account.', 'Handa na ang tanan. Mapasa ninyo dayon kon maaprobahan na ang inyo account.');
     } else {
       icon = Icons.send_outlined;
-      title = tr('Submit and bring the paper set to $kMunicipality', 'Ipasa at dalhin ang papel sa $kMunicipality', 'Ipasa kag dal-a ang papel sa $kMunicipality');
-      body = tr('All four signed copies are uploaded. Submit here, then bring the signed papers to the MLGOO office.',
-          'Na-upload na ang apat na pirmadong kopya. Ipasa dito, saka dalhin ang mga pirmadong papel sa tanggapan ng MLGOO.', 'Na-upload na ang apat ka may pirma nga kopya. Pwede na kamo magpasa diri, dayon dal-a ang may pirma nga papel sa opisina sang MLGOO.');
-      actions = [_bigButton(tr('Submit to $kMunicipality', 'Ipasa sa $kMunicipality', 'Ipasa sa $kMunicipality'), Icons.send_outlined, _submit)];
+                  title = tr('Share to Municipality and bring the paper set', 'Ibahagi sa Munisipyo at dalhin ang papel',
+          'Ipaambit sa Munisipyo kag dal-a ang papel');
+      body = tr('All four signed copies are uploaded. Share them so the Municipality can open the softcopies, then bring the signed papers to the MLGOO office.',
+          'Na-upload na ang apat na pirmadong kopya. Ibahagi para mabuksan ng Munisipyo ang softcopy, saka dalhin ang pirmadong papel sa tanggapan ng MLGOO.',
+          'Na-upload na ang apat ka may pirma nga kopya. Ipaambit para mabuksan sang Munisipyo ang softcopy, dayon dal-a ang may pirma nga papel sa opisina sang MLGOO.');
+      actions = [_bigButton(tr('Share to Municipality', 'Ibahagi sa Munisipyo', 'Ipaambit sa Munisipyo'), Icons.share_outlined, _submit)];
     }
 
     return Container(
@@ -926,7 +973,7 @@ class _DashboardPageState extends State<DashboardPage> {
             Expanded(
               child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                 Text(tanods[i].fullName, style: sans(16, w: FontWeight.w700)),
-                Text(tanods[i].idType, style: sans(14, color: C.muted)),
+                Text('No. ${awardNo(i)}', style: sans(14, color: C.muted)),
               ]),
             ),
           ]),
@@ -973,7 +1020,8 @@ class _DashboardPageState extends State<DashboardPage> {
         pendingSync++;
         online = false;
       });
-      _toast(tr('Marked as different people.', 'Itinala bilang magkaibang tao.', 'Ginmarkahan nga lain-lain nga tawo.'));
+      _toast(tr('Marked as different people.', 'Itinala bilang magkaibang tao.', 'Ginmarkahan nga lain-lain nga tawo.'), NotifyType.success,
+          tr('Duplicate cleared', 'Hindi na doble', 'Indi na doble'));
     } else {
       final name = tanods[idx[1]].fullName;
       setState(() {
@@ -981,7 +1029,8 @@ class _DashboardPageState extends State<DashboardPage> {
         _markChanged();
       });
       _toast(tr('Removed the second $name. Award numbers were updated.',
-          'Tinanggal ang ikalawang $name. Na-update ang mga award number.', 'Ginkuha na ang ikaduha nga $name. Na-update na ang mga award number.'));
+          'Tinanggal ang ikalawang $name. Na-update ang mga award number.', 'Ginkuha na ang ikaduha nga $name. Na-update na ang mga award number.'),
+          NotifyType.success, tr('Deleted successfully', 'Matagumpay na natanggal', 'Malampuson nga nakuha'));
     }
   }
 
@@ -1114,7 +1163,7 @@ class _DashboardPageState extends State<DashboardPage> {
         C.yellowDark,
         const Color(0xFF5C4400),
         Icons.hourglass_top_rounded,
-        tr('Waiting for $kMunicipality to approve your account', 'Hinihintay ang pag-apruba ng $kMunicipality sa inyong account', 'Ginahulat nga aprobahan sang $kMunicipality ang inyo account'),
+                tr('Waiting for the Municipality to approve your account', 'Hinihintay ang pag-apruba ng Munisipyo sa inyong account', 'Ginahulat ang pag-aprobar sang Munisipyo sa imo account'),
         tr('You can already encode tanods, print and upload. Submitting unlocks once the municipality checks your proof of designation.',
             'Puwede na kayong maglagay ng tanod, mag-print at mag-upload. Mabubuksan ang pagpasa kapag nasuri na ng munisipyo ang inyong patunay.', 'Pwede na kamo magsulod sang tanod, mag-print kag mag-upload. Mabuksan ang pagpasa kon nausisa na sang munisipyo ang inyo pamatuod sang designation.'),
       );
@@ -1272,36 +1321,61 @@ class _DashboardPageState extends State<DashboardPage> {
     );
   }
 
-  Widget _statusPanel() {
-    final notes = [
-      tr('Nothing has been sent yet. Follow “Your next step” at the top.', 'Wala pang naipapasa. Sundan ang “Susunod na hakbang” sa itaas.', 'Wala pa sang ginpadala. Sunda lang ang “Sunod ninyo nga lakang” sa ibabaw.'),
-      tr('$kMunicipality is checking your paper set. Mistakes they find will come as messages.',
-          'Sinusuri ng $kMunicipality ang inyong papel. Darating bilang mensahe ang anumang mali.', 'Ginausisa sang $kMunicipality ang inyo papel. Ang mga sala nga makita nila maabot bilang mensahe.'),
-      tr('Checked by $kMunicipality. It will bring all barangays’ paper sets to OPPDC together.',
-          'Nasuri na ng $kMunicipality. Sabay-sabay nitong dadalhin sa OPPDC ang papel ng lahat ng barangay.', 'Nausisa na sang $kMunicipality. Dungan nga dal-on ini sa OPPDC upod ang papel sang tanan nga barangay.'),
-      tr('OPPDC has the paper sets. It can also open your uploaded copies as a backup.',
-          'Nasa OPPDC na ang mga papel. Mabubuksan din nito ang inyong na-upload na kopya bilang backup.', 'Ara sa OPPDC ang papel. Mabuksan man sini ang inyo na-upload nga kopya bilang backup.'),
-      tr('The incentive has been released.', 'Na-release na ang incentive.', 'Na-release na ang incentive.'),
-    ];
+      Widget _statusPanel() {
+    final note = switch (rec.status) {
+      BrgyStatus.notStarted || BrgyStatus.preparing => tr(
+          'Nothing has been shared yet. Follow “Your next step” at the top.',
+          'Wala pang naibabahagi. Sundan ang “Susunod na hakbang” sa itaas.',
+          'Wala pa sang napaambit. Sunda ang “Masunod nga hakbang” sa ibabaw.'),
+      BrgyStatus.submitted => tr(
+          'Your documents are shared with the Municipality. The reviewer is checking your paper set; any mistake will come as a message.',
+          'Naibahagi na sa Munisipyo ang inyong dokumento. Sinusuri ng reviewer ang papel; darating bilang mensahe ang anumang mali.',
+          'Napaambit na sa Munisipyo ang inyo dokumento. Ginausisa sang reviewer ang papel; magaabot bilang mensahe ang bisan ano nga sala.'),
+      BrgyStatus.corrections => tr(
+          'The Municipality asked for corrections. Editing and uploading are open until you send them back.',
+          'Humiling ng pagtatama ang Munisipyo. Bukas ang pag-edit at pag-upload hanggang maipasa ulit.',
+          'Nagpangayo sang pagtadlong ang Munisipyo. Bukas ang pag-edit kag pag-upload tubtob mapasa liwat.'),
+      BrgyStatus.checked => tr(
+          'Reviewed by the Municipality. It will bring all barangays’ paper sets to OPPDC together.',
+          'Nasuri na ng Munisipyo. Sabay-sabay nitong dadalhin sa OPPDC ang papel ng lahat ng barangay.',
+          'Nausisa na sang Munisipyo. Dungan nga dal-on sini sa OPPDC ang papel sang tanan nga barangay.'),
+      BrgyStatus.sentToOppdc => tr(
+          'OPPDC is reviewing the paper sets. It can also open your shared copies as a backup.',
+          'Sinusuri ng OPPDC ang mga papel. Mabubuksan din nito ang inyong naibahaging kopya bilang backup.',
+          'Ginausisa sang OPPDC ang mga papel. Mabuksan man sini ang inyo napaambit nga kopya bilang backup.'),
+      BrgyStatus.released => tr('The incentive has been released.', 'Na-release na ang incentive.', 'Na-release na ang incentive.'),
+    };
+    final (String pillText, Color pillBg, Color pillFg) = pending
+        ? (tr('Awaiting approval', 'Hinihintay ang apruba', 'Ginahulat ang pag-aprobar'), const Color(0xFFFFF4CC), const Color(0xFF7A5B00))
+        : switch (rec.status) {
+            BrgyStatus.corrections => (tr('Corrections requested', 'May itatama', 'May tadlungon'), const Color(0xFFFDF0EE), C.red),
+            BrgyStatus.checked => (
+                tr('Reviewed by Municipality', 'Nasuri ng Munisipyo', 'Nausisa sang Munisipyo'),
+                C.greenSoft,
+                const Color(0xFF14583D)
+              ),
+            BrgyStatus.released => (tr('Released', 'Na-release', 'Na-release'), C.greenSoft, const Color(0xFF14583D)),
+            _ => (_stepName(stage), const Color(0xFFFFF4CC), const Color(0xFF7A5B00)),
+          };
     return _Panel(
-      title: tr('Submission Status', 'Kalagayan ng Pagpasa', 'Status sang imo Pagpasa'),
+      title: tr('Submission status', 'Kalagayan ng pagpasa', 'Kahimtangan sang pagpasa'),
       icon: Icons.route_outlined,
       help: tr(
-          'You prepare the documents, upload the signed copies, and bring the paper set to $kMunicipality. The municipality '
-              'checks the paper and messages you about any mistake. When every barangay is checked, $kMunicipality brings all '
-              'the paper sets to OPPDC together. Your uploaded copies are the backup everyone can open.',
-          'Ihahanda ninyo ang dokumento, ia-upload ang pirmadong kopya, at dadalhin ang papel sa $kMunicipality. Susuriin ng '
-              'munisipyo ang papel at magme-message kung may mali. Kapag nasuri na ang lahat ng barangay, sabay-sabay itong dadalhin '
-              'ng $kMunicipality sa OPPDC. Ang na-upload na kopya ang backup na mabubuksan ng lahat.', 'Kamo ang maghanda sang dokumento, mag-upload sang may pirma nga kopya, kag magdala sang papel sa $kMunicipality. Usisaon sang munisipyo ' 'ang papel kag magmensahe sa inyo kon may sala. Kon nausisa na ang tanan nga barangay, dungan nga dal-on sang $kMunicipality ' 'ang tanan nga papel sa OPPDC. Ang inyo na-upload nga kopya ang backup nga mabuksan sang tanan.'),
-      trailing: corrections
-          ? _pill(tr('Corrections', 'May itatama', 'Pagtadlong'), const Color(0xFFFDF0EE), C.red, icon: Icons.assignment_return_outlined)
-          : pending
-              ? _pill(tr('Awaiting approval', 'Hinihintay ang apruba', 'Ginahulat ang aprobasyon'), const Color(0xFFFFF4CC), const Color(0xFF7A5B00))
-              : stage == 4
-                  ? _pill(tr('Released', 'Na-release', 'Na-release'), C.greenSoft, const Color(0xFF14583D), icon: Icons.check)
-                  : _pill(_stepName(stage), const Color(0xFFFFF4CC), const Color(0xFF7A5B00)),
+          'Preparing: you complete the documents and upload the signed copies. Shared to Municipality: the Municipality can '
+              'open the softcopies of all your documents, and you bring the paper set. Municipality Reviewing: the reviewer '
+              'checks the paper and messages you about any mistake. OPPDC Reviewing: the Municipality brings every barangay’s '
+              'paper set to OPPDC together. Released: the incentive is paid out.',
+          'Inihahanda: kinukumpleto ninyo ang dokumento at ina-upload ang pirmadong kopya. Naibahagi sa Munisipyo: mabubuksan '
+              'ng Munisipyo ang softcopy ng lahat ng dokumento, at dadalhin ninyo ang papel. Sinusuri ng Munisipyo: susuriin ang '
+              'papel at magme-message kung may mali. Sinusuri ng OPPDC: sabay-sabay na dadalhin ng Munisipyo sa OPPDC ang papel ng '
+              'lahat ng barangay. Na-release: naibigay na ang incentive.',
+          'Ginahanda: ginakompleto ninyo ang dokumento kag ginaupload ang may pirma nga kopya. Napaambit sa Munisipyo: mabuksan '
+              'sang Munisipyo ang softcopy sang tanan ninyo nga dokumento, kag dal-on ninyo ang papel. Ginausisa sang Munisipyo: '
+              'usisaon sang reviewer ang papel kag magmensahe kon may sala. Ginausisa sang OPPDC: dungan nga dal-on sang Munisipyo '
+              'sa OPPDC ang papel sang tanan nga barangay. Na-release: naihatag na ang incentive.'),
+      trailing: _pill(pillText, pillBg, pillFg),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        _StatusTracker(current: stage, correctionsAt: corrections ? 1 : null),
+        _StatusTracker(current: stage, correctionsAt: corrections ? 2 : null),
         const SizedBox(height: 16),
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
@@ -1311,13 +1385,11 @@ class _DashboardPageState extends State<DashboardPage> {
             const SizedBox(width: 10),
             Expanded(
               child: Text(
-                corrections
-                    ? tr('$kMunicipality asked for corrections. Editing and uploading are open until you send them back.',
-                        'Humiling ng pagtatama ang $kMunicipality. Bukas ang pag-edit at pag-upload hanggang maipasa ulit.', 'Nagpangayo ang $kMunicipality sang pagtadlong. Bukas ang pag-edit kag pag-upload tubtob ipadala ninyo liwat.')
-                    : pending
-                        ? tr('Your account is waiting for $kMunicipality’s approval. You can prepare everything in the meantime.',
-                            'Hinihintay ang apruba ng $kMunicipality sa inyong account. Puwede na kayong maghanda.', 'Ginahulat ang aprobasyon sang $kMunicipality sa inyo account. Pwede ninyo mahanda ang tanan samtang.')
-                        : notes[stage],
+                pending
+                    ? tr('Your account is waiting for the Municipality’s approval. You can prepare everything in the meantime.',
+                        'Hinihintay ang apruba ng Munisipyo sa inyong account. Puwede na kayong maghanda.',
+                        'Ginahulat ang pag-aprobar sang Munisipyo sa inyo account. Puede na kamo maghanda.')
+                    : note,
                 style: sans(14.5, color: const Color(0xFF1B3F68), h: 1.45),
               ),
             ),
@@ -1327,47 +1399,103 @@ class _DashboardPageState extends State<DashboardPage> {
     );
   }
 
+  // ---------- Tanod requirement status (used by the Overview tiles) ----------
+  // Misspelled: the name hasn't been checked against the ID yet.
+  bool _isMisspelled(Tanod t) => !t.confirmed;
+  // Duplicate: another tanod in the list has the same first + last name,
+  // and nobody has marked them as "different people" yet.
+  bool _isDuplicate(Tanod t) =>
+      !resolved.contains('dup-${t.nameKey}') && tanods.where((x) => x.nameKey == t.nameKey).length > 1;
+  // Indexes of the other tanods with the same name
+  List<int> _duplicatesOf(Tanod t) =>
+      [for (var i = 0; i < tanods.length; i++) if (!identical(tanods[i], t) && tanods[i].nameKey == t.nameKey) i];
+  // Completed: name checked and not a duplicate.
+  bool _isCompleted(Tanod t) => !_isMisspelled(t) && !_isDuplicate(t);
+
+  // "View" buttons on the tiles: filter the Tanods list underneath
+  void _viewCompleted() => _setFilter(_TanodFilter.completed);
+  void _viewMisspelled() => _setFilter(_TanodFilter.misspelled);
+  void _viewDuplicates() => _setFilter(_TanodFilter.duplicate);
+  void _clearFilter() {
+    if (_filter == _TanodFilter.all) return;
+    setState(() => _filter = _TanodFilter.all);
+    _toast(tr('Showing all tanods again.', 'Ipinapakita ulit ang lahat ng tanod.', 'Ginapakita liwat ang tanan nga tanod.'), NotifyType.info,
+        tr('Filter cleared', 'Inalis ang filter', 'Ginkuha ang filter'));
+  }
+
+  void _setFilter(_TanodFilter f) {
+    setState(() => _filter = f);
+    final n = tanods.where(_matchesFilter).length;
+    _toast(
+      tr('$n tanod${n == 1 ? '' : 's'} shown: $_filterLabel.', '$n tanod ang ipinapakita: $_filterLabel.', '$n ka tanod ang ginapakita: $_filterLabel.'),
+      n == 0 ? NotifyType.warning : NotifyType.info,
+      tr('Filter applied', 'Na-filter', 'Na-filter'),
+    );
+  }
+
+  bool _matchesFilter(Tanod t) => switch (_filter) {
+        _TanodFilter.all => true,
+        _TanodFilter.completed => _isCompleted(t),
+        _TanodFilter.misspelled => _isMisspelled(t),
+        _TanodFilter.duplicate => _isDuplicate(t),
+      };
+
+  String get _filterLabel => switch (_filter) {
+        _TanodFilter.all => '',
+        _TanodFilter.completed => tr('Completed tanods', 'Kumpletong tanod', 'Kompleto nga tanod'),
+        _TanodFilter.misspelled => tr('Misspelled information', 'Maling baybay', 'Sala nga spelling'),
+        _TanodFilter.duplicate => tr('Duplicates', 'Doble', 'Doble'),
+      };
+
   Widget _stats() {
-    final count = tanods.length;
-    final alertCount = alerts.length;
+    final total = tanods.length;
+    final completed = tanods.where(_isCompleted).length;
+    final misspelled = tanods.where(_isMisspelled).length;
+    final duplicates = tanods.where(_isDuplicate).length;
     final tiles = [
       _StatTile(
-        icon: Icons.groups_outlined,
-        tint: C.blue,
-        value: '$count / $kQuota',
-        label: tr('Tanods listed', 'Nakalistang tanod', 'Nalista nga tanod'),
-        note: tr('Up to $kQuota allowed', 'Hanggang $kQuota ang puwede', 'Tubtob $kQuota ang gintugot'),
-        help: tr('OPPDC sets how many tanods each barangay can list this year. For Brgy. $kBarangay it’s $kQuota. '
-                'Gawad stops you from adding more.',
-            'Ang OPPDC ang nagtatakda kung ilang tanod ang puwedeng ilista ng bawat barangay ngayong taon. '
-                'Sa Brgy. $kBarangay, $kQuota ito. Hindi na kayo makakapagdagdag lampas dito.', 'Ang OPPDC ang nagatakda kon pila ka tanod ang malista sang kada barangay subong nga tuig. Sa Brgy. $kBarangay, $kQuota ini. ' 'Indi na makadugang ang Gawad kon puno na.'),
-        progress: count / kQuota,
-      ),
-      _StatTile(
-        icon: Icons.payments_outlined,
+        icon: Icons.task_alt_rounded,
         tint: C.green,
-        value: peso(count * kAmountEach),
-        label: tr('Payroll total', 'Kabuuang payroll', 'Kabilugan sang payroll'),
-        note: tr('${peso(kAmountEach)} each × $count', '${peso(kAmountEach)} bawat isa × $count', '${peso(kAmountEach)} kada isa × $count'),
+        value: '$completed / $total',
+        label: tr('Completed tanods', 'Kumpletong tanod', 'Kompleto nga tanod'),
+        note: tr('Name checked and listed only once', 'Nasuri ang pangalan at isang beses lang nakalista',
+            'Nausisa ang ngalan kag makaisa lang nalista'),
+        help: tr('A tanod is completed when the name was checked against the ID and the same person '
+                'is not listed twice.',
+            'Kumpleto ang tanod kapag nasuri na ang pangalan laban sa ID at hindi dalawang beses nakalista.',
+            'Kompleto ang tanod kon nausisa na ang ngalan suno sa ID kag indi duha ka beses nalista.'),
+        progress: total == 0 ? 0 : completed / total,
+        onView: _viewCompleted,
       ),
       _StatTile(
-        icon: Icons.inventory_2_outlined,
-        tint: C.yellowDark,
-        value: '${rec.backupCount} / 4',
-        label: tr('Signed copies uploaded', 'Na-upload na pirmadong kopya', 'Na-upload nga may pirma nga kopya'),
-        note: tr('Backup of the signed paper', 'Backup ng pirmadong papel', 'Backup sang may pirma nga papel'),
-        progress: rec.backupCount / 4,
+        icon: Icons.spellcheck_rounded,
+        tint: misspelled == 0 ? C.green : C.yellowDark,
+        value: '$misspelled',
+        label: tr('Misspelled information', 'Maling baybay', 'Sala nga spelling'),
+        note: misspelled == 0
+            ? tr('No names to check', 'Walang pangalang susuriin', 'Wala sang ngalan nga usisaon')
+            : tr('Names to check against the ID', 'Mga pangalang susuriin sa ID', 'Mga ngalan nga usisaon suno sa ID'),
+        onView: _viewMisspelled,
       ),
       _StatTile(
-        icon: alertCount == 0 ? Icons.verified_outlined : Icons.error_outline,
-        tint: alertCount == 0 ? C.green : C.red,
-        value: '$alertCount',
-        label: tr('Alerts', 'Mga paalala', 'Mga pahanumdom'),
-        note: alertCount == 0 ? tr('All clear', 'Ayos na lahat', 'Wala sang problema') : tr('See the alerts below', 'Tingnan sa ibaba', 'Palihog tan-awa ang mga pahanumdom sa idalom'),
+        icon: duplicates == 0 ? Icons.verified_outlined : Icons.people_alt_outlined,
+        tint: duplicates == 0 ? C.green : C.red,
+        value: '$duplicates',
+        label: tr('Duplicates', 'Doble', 'Doble'),
+        note: duplicates == 0
+            ? tr('No one is listed twice', 'Walang dalawang beses nakalista', 'Wala sang duha ka beses nalista')
+            : tr('Same name listed more than once', 'Parehong pangalan na higit sa isang beses', 'Pareho nga ngalan nga sobra sa makaisa'),
+        help: tr('Tanods with the same first and last name. Check their IDs: if it is the same person, remove the extra one; '
+                'if they are different people, mark them as different.',
+            'Mga tanod na pareho ang pangalan at apelyido. Tingnan ang ID: kung iisang tao, tanggalin ang sobra; '
+                'kung magkaiba, markahan bilang magkaibang tao.',
+            'Mga tanod nga pareho ang ngalan kag apelyido. Palihog tan-awa ang ID: kon isa lang ka tawo, kuhaa ang sobra; '
+                'kon lain-lain, markahan nga lain-lain nga tawo.'),
+        onView: _viewDuplicates,
       ),
     ];
     return LayoutBuilder(builder: (context, box) {
-      final cols = box.maxWidth >= 900 ? 4 : (box.maxWidth >= 480 ? 2 : 1);
+      final cols = box.maxWidth >= 900 ? 3 : (box.maxWidth >= 480 ? 2 : 1); // 3 tiles (payroll tile removed)
       final tw = ((box.maxWidth - 16 * (cols - 1)) / cols).floorToDouble();
       return Wrap(spacing: 16, runSpacing: 16, children: [for (final t in tiles) SizedBox(width: tw, child: t)]);
     });
@@ -1591,7 +1719,11 @@ class _DashboardPageState extends State<DashboardPage> {
   }
 
   Widget _tanodPanel({int? limit}) {
-    final shown = limit == null ? tanods : tanods.take(limit).toList();
+    // (index in the full list, tanod): the index is the award number and is used by Edit / Remove
+    final matching = [for (var i = 0; i < tanods.length; i++) if (_matchesFilter(tanods[i])) (i, tanods[i])];
+    final filtered = _filter != _TanodFilter.all;
+    // A filtered list shows every match; the unfiltered Overview list shows the first [limit]
+    final shown = limit == null || filtered ? matching : matching.take(limit).toList();
     final slots = kQuota - tanods.length;
     return _Panel(
       title: tr('Tanods', 'Mga Tanod', 'Mga Tanod'),
@@ -1621,13 +1753,44 @@ class _DashboardPageState extends State<DashboardPage> {
               child: Row(children: [
                 SizedBox(width: 64, child: Text(tr('NO.', 'BLG.', 'NO.'), style: _th)),
                 Expanded(flex: 3, child: Text(tr('NAME', 'PANGALAN', 'NGALAN'), style: _th)),
-                Expanded(flex: 2, child: Text(tr('ID PRESENTED', 'ID NA IPINAKITA', 'ID NGA GINPAKITA'), style: _th)),
-                SizedBox(width: 150, child: Text(tr('STATUS', 'KALAGAYAN', 'KAHIMTANGAN'), style: _th)),
-                if (actions) SizedBox(width: 230, child: Text('', style: _th)),
+                // ID type column removed; STATUS takes its place, centered
+                Expanded(flex: 2, child: Text(tr('STATUS', 'KALAGAYAN', 'KAHIMTANGAN'), textAlign: TextAlign.center, style: _th)),
+                if (actions) SizedBox(width: 230, child: Text(tr('ACTION', 'AKSYON', 'AKSYON'), textAlign: TextAlign.center, style: _th)),
               ]),
             ),
-          for (var i = 0; i < shown.length; i++)
-            table ? _tanodRow(i, shown[i], actions) : _tanodTile(i, shown[i], actions),
+          // Filter bar: what is shown + Clear
+          if (filtered)
+            Container(
+              margin: const EdgeInsets.only(bottom: 10),
+              padding: const EdgeInsets.fromLTRB(14, 6, 6, 6),
+              decoration: BoxDecoration(color: C.blueSoft, borderRadius: BorderRadius.circular(10)),
+              child: Row(children: [
+                const Icon(Icons.filter_list_rounded, size: 18, color: C.blue),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    tr('Showing: $_filterLabel (${matching.length} of ${tanods.length})',
+                        'Ipinapakita: $_filterLabel (${matching.length} sa ${tanods.length})',
+                        'Ginapakita: $_filterLabel (${matching.length} sa ${tanods.length})'),
+                    style: sans(14.5, w: FontWeight.w600, color: const Color(0xFF1B3F68)),
+                  ),
+                ),
+                TextButton.icon(
+                  style: TextButton.styleFrom(foregroundColor: C.blue, minimumSize: const Size(0, 40)),
+                  onPressed: _clearFilter,
+                  icon: const Icon(Icons.close_rounded, size: 18),
+                  label: Text(tr('Clear', 'Alisin', 'Kuhaa'), style: sans(14.5, w: FontWeight.w700, color: C.blue)),
+                ),
+              ]),
+            ),
+          if (filtered && matching.isEmpty)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 18),
+              child: Text(tr('No tanods in this group.', 'Walang tanod dito.', 'Wala sang tanod diri.'),
+                  textAlign: TextAlign.center, style: sans(15, color: C.muted)),
+            ),
+          for (final (i, t) in shown)
+            table ? _tanodRow(i, t, actions) : _tanodTile(i, t, actions),
           const SizedBox(height: 14),
           Wrap(spacing: 10, runSpacing: 10, children: [
             FilledButton.icon(
@@ -1660,9 +1823,147 @@ class _DashboardPageState extends State<DashboardPage> {
 
   TextStyle get _th => sans(12.5, w: FontWeight.w700, color: C.muted).copyWith(letterSpacing: .6);
 
-  Widget _statusPill(Tanod t) => t.confirmed
-      ? _pill(tr('Checked', 'Nasuri na', 'Nausisa na'), C.greenSoft, const Color(0xFF14583D), icon: Icons.check)
-      : _pill(tr('Check spelling', 'Suriin ang baybay', 'Usisaa ang spelling'), const Color(0xFFFFF4CC), const Color(0xFF7A5B00), icon: Icons.error_outline);
+  // What exactly is missing for one tanod (shown in the status pop-up)
+  List<String> _missingParts(Tanod t) => [
+        if (t.first.trim().isEmpty) tr('First name', 'Pangalan', 'Ngalan'),
+        if (t.last.trim().isEmpty) tr('Last name', 'Apelyido', 'Apelyido'),
+        if (t.idFront == null) tr('Photo of the FRONT of the ID', 'Litrato ng HARAP ng ID', 'Litrato sang ATUBANGAN sang ID'),
+        if (t.idBack == null) tr('Photo of the BACK of the ID', 'Litrato ng LIKOD ng ID', 'Litrato sang LIKOD sang ID'),
+      ];
+
+  // Tap a status → pop-up listing what's missing / what to check, with a fix button
+  Future<void> _showStatus(int i, Tanod t) async {
+    final missing = _missingParts(t);
+    final misspelled = _isMisspelled(t);
+    final duplicate = _isDuplicate(t);
+    final twins = _duplicatesOf(t);
+    final needPhotos = t.idFront == null || t.idBack == null;
+
+    Widget item(IconData icon, Color color, String text) => Padding(
+          padding: const EdgeInsets.only(bottom: 10),
+          child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Icon(icon, size: 20, color: color),
+            const SizedBox(width: 10),
+            Expanded(child: Text(text, style: sans(15, h: 1.4))),
+          ]),
+        );
+
+    final action = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: Colors.white,
+        surfaceTintColor: Colors.white,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: Text('${awardNo(i)} · ${t.fullName}', style: serif(22)),
+        content: SizedBox(
+          width: 420,
+          child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+            if (!misspelled && !duplicate)
+              item(Icons.check_circle, C.green,
+                  tr('Completed. Name checked and listed once.', 'Kumpleto. Nasuri ang pangalan at isang beses nakalista.',
+                      'Kompleto. Nausisa ang ngalan kag makaisa nalista.')),
+            if (duplicate) ...[
+              Text(tr('Same name as:', 'Kapareho ng pangalan ni:', 'Pareho sang ngalan ni:'),
+                  style: sans(15, w: FontWeight.w700, color: C.red)),
+              const SizedBox(height: 8),
+              for (final j in twins)
+                item(Icons.people_alt_outlined, C.red, '${awardNo(j)} · ${tanods[j].fullName}'),
+            ],
+            if (misspelled)
+              item(Icons.spellcheck_rounded, const Color(0xFF7A5B00),
+                  tr('Name not checked yet. Compare it with the original ID, then save.',
+                      'Hindi pa nasusuri ang pangalan. Ikumpara sa orihinal na ID, saka i-save.',
+                      'Wala pa nausisa ang ngalan. Palihog ikumpara sa orihinal nga ID, dayon i-save.')),
+            // Not part of the status, but useful: ID photos for the photocopy sheet
+            if (missing.isNotEmpty) ...[
+              const SizedBox(height: 4),
+              Text(tr('Not on file yet:', 'Wala pa:', 'Wala pa:'), style: sans(14, w: FontWeight.w700, color: C.muted)),
+              const SizedBox(height: 6),
+              for (final m in missing) item(Icons.info_outline, C.muted, m),
+            ],
+          ]),
+        ),
+        actionsPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: Text(tr('Close', 'Isara', 'Sirhan'), style: sans(15, w: FontWeight.w600, color: C.muted)),
+          ),
+          if (!locked && duplicate)
+            FilledButton.icon(
+              style: FilledButton.styleFrom(backgroundColor: C.red, foregroundColor: Colors.white),
+              onPressed: () => Navigator.pop(ctx, 'compare'),
+              icon: const Icon(Icons.compare_arrows_rounded, size: 18),
+              label: Text(tr('Compare', 'Ikumpara', 'Ikumpara')),
+            ),
+          if (!locked && needPhotos)
+            OutlinedButton.icon(
+              onPressed: () => Navigator.pop(ctx, 'photos'),
+              icon: const Icon(Icons.photo_camera_outlined, size: 18),
+              label: Text(tr('Take ID photos', 'Kunan ang ID', 'Kuhai ang ID')),
+            ),
+          if (!locked && (misspelled || t.first.trim().isEmpty || t.last.trim().isEmpty))
+            FilledButton.icon(
+              style: FilledButton.styleFrom(backgroundColor: C.navy, foregroundColor: Colors.white),
+              onPressed: () => Navigator.pop(ctx, 'edit'),
+              icon: const Icon(Icons.edit_outlined, size: 18),
+              label: Text(tr('Check name', 'Suriin ang pangalan', 'Usisaa ang ngalan')),
+            ),
+        ],
+      ),
+    );
+    if (!mounted) return;
+    if (action == 'edit') await _editTanod(i);
+    if (action == 'photos') await _retakePhotos(t);
+    // Existing "Same person?" dialog: remove the extra one, or mark as different people
+    if (action == 'compare') {
+      await _reviewDuplicate(_Issue('dup-${t.nameKey}', '', '', Icons.people_alt_outlined));
+    }
+  }
+
+  // Take the front and back ID photos for an existing tanod (guided camera)
+  Future<void> _retakePhotos(Tanod t) async {
+    Future<Uint8List?> shoot(String title) async {
+      final photo = await Navigator.push<XFile>(
+        context,
+        MaterialPageRoute(builder: (_) => IdCameraScreen(title: title)),
+      );
+      if (photo == null) return null;
+      return compute(cropToGuide, await photo.readAsBytes());
+    }
+
+    final front = await shoot(tr('Front of the ID', 'Harap ng ID', 'Atubangan sang ID'));
+    if (front == null || !mounted) return;
+    _toast(tr('Front photo saved. Now take the back.', 'Na-save ang harap. Kunan naman ang likod.', 'Na-save ang atubangan. Kuhai naman ang likod.'),
+        NotifyType.success, tr('Photo saved', 'Na-save ang litrato', 'Na-save ang litrato'));
+    final back = await shoot(tr('Back of the ID', 'Likod ng ID', 'Likod sang ID'));
+    if (back == null || !mounted) return;
+    setState(() {
+      t.idFront = front;
+      t.idBack = back;
+      _markChanged();
+    });
+    _toast(tr('ID photos saved for ${t.fullName}.', 'Na-save ang litrato ng ID ni ${t.fullName}.',
+        'Na-save ang litrato sang ID ni ${t.fullName}.'), NotifyType.success, tr('Photos saved', 'Na-save ang litrato', 'Na-save ang litrato'));
+  }
+
+  // Status pill that opens the pop-up when tapped
+  Widget _tappableStatus(int i, Tanod t) => InkWell(
+        borderRadius: BorderRadius.circular(99),
+        onTap: () => _showStatus(i, t),
+        child: Row(mainAxisSize: MainAxisSize.min, children: [
+          _statusPill(t),
+          const SizedBox(width: 4),
+          const Icon(Icons.chevron_right_rounded, size: 18, color: C.muted),
+        ]),
+      );
+
+  // Same three statuses as the Overview tiles
+  Widget _statusPill(Tanod t) => _isDuplicate(t)
+      ? _pill(tr('Duplicate', 'Doble', 'Doble'), const Color(0xFFFDF0EE), C.red, icon: Icons.people_alt_outlined)
+      : _isMisspelled(t)
+          ? _pill(tr('Check spelling', 'Suriin ang baybay', 'Usisaa ang spelling'), const Color(0xFFFFF4CC), const Color(0xFF7A5B00), icon: Icons.error_outline)
+          : _pill(tr('Completed', 'Kumpleto', 'Kompleto'), C.greenSoft, const Color(0xFF14583D), icon: Icons.check);
 
   Widget _avatar(Tanod t) => CircleAvatar(
         radius: 17,
@@ -1683,18 +1984,17 @@ class _DashboardPageState extends State<DashboardPage> {
               Expanded(child: Text(t.fullName, overflow: TextOverflow.ellipsis, style: sans(15, w: FontWeight.w600))),
             ]),
           ),
-          Expanded(flex: 2, child: Text(t.idType, overflow: TextOverflow.ellipsis, style: sans(14.5, color: C.muted))),
-          SizedBox(
-            width: 150,
+          Expanded(
+            flex: 2,
             child: Align(
-              alignment: Alignment.centerLeft,
-              child: FittedBox(fit: BoxFit.scaleDown, alignment: Alignment.centerLeft, child: _statusPill(t)),
+              alignment: Alignment.center,
+              child: FittedBox(fit: BoxFit.scaleDown, child: _tappableStatus(i, t)),
             ),
           ),
           if (actions)
             SizedBox(
               width: 230,
-              child: Wrap(spacing: 6, runSpacing: 6, children: [
+              child: Wrap(alignment: WrapAlignment.center, spacing: 6, runSpacing: 6, children: [
                 _rowButton(tr('Edit', 'Baguhin', 'I-edit'), Icons.edit_outlined, C.blue, locked ? null : () => _editTanod(i)),
                 _rowButton(tr('Remove', 'Tanggalin', 'Kuhaon'), Icons.delete_outline, C.red, locked ? null : () => _removeTanod(i)),
               ]),
@@ -1726,11 +2026,11 @@ class _DashboardPageState extends State<DashboardPage> {
               child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                 Text(t.fullName, overflow: TextOverflow.ellipsis, style: sans(15.5, w: FontWeight.w600)),
                 const SizedBox(height: 2),
-                Text('No. ${awardNo(i)} · ${t.idType}', overflow: TextOverflow.ellipsis, style: sans(14.5, color: C.muted)),
+                Text('No. ${awardNo(i)}', overflow: TextOverflow.ellipsis, style: sans(14.5, color: C.muted)),
               ]),
             ),
             const SizedBox(width: 8),
-            FittedBox(fit: BoxFit.scaleDown, child: _statusPill(t)),
+            FittedBox(fit: BoxFit.scaleDown, child: _tappableStatus(i, t)),
           ]),
           if (actions) ...[
             const SizedBox(height: 10),
@@ -1839,8 +2139,18 @@ class _DashboardPageState extends State<DashboardPage> {
           ),
           FilledButton(
             style: FilledButton.styleFrom(backgroundColor: C.navy, foregroundColor: Colors.white),
-            onPressed: () {
-              if (formKey.currentState!.validate()) Navigator.pop(ctx, true);
+            onPressed: () async {
+              if (!formKey.currentState!.validate()) return;
+              final sure = await confirmAction(
+                ctx,
+                title: tr('Save changes?', 'I-save ang pagbabago?', 'I-save ang pagbag-o?'),
+                message: tr('The name will be updated on the Payroll, Masterlist, Certification and ID sheet.',
+                    'Mapapalitan ang pangalan sa Payroll, Masterlist, Certification at ID sheet.',
+                    'Mabag-o ang ngalan sa Payroll, Masterlist, Certification kag ID sheet.'),
+                confirmLabel: tr('Yes, save', 'Oo, i-save', 'Huo, i-save'),
+                icon: Icons.edit_note_rounded,
+              );
+              if (sure && ctx.mounted) Navigator.pop(ctx, true);
             },
             child: Text(tr('Save changes', 'I-save', 'I-save ang pagbag-o')),
           ),
@@ -1867,7 +2177,10 @@ class _DashboardPageState extends State<DashboardPage> {
           online = false;
         }
       });
-      _toast(tr('Saved ${t.fullName}. All documents were updated.', 'Na-save si ${t.fullName}. Na-update ang lahat ng dokumento.', 'Na-save si ${t.fullName}. Na-update ang tanan nga dokumento.'));
+      _toast(tr('Saved ${t.fullName}. All documents were updated.', 'Na-save si ${t.fullName}. Na-update ang lahat ng dokumento.', 'Na-save si ${t.fullName}. Na-update ang tanan nga dokumento.'),
+          NotifyType.success, tr('Changes saved', 'Na-save ang pagbabago', 'Na-save ang pagbag-o'));
+    } else if (saved == false && mounted) {
+      _toast(tr('No changes were made.', 'Walang binago.', 'Wala sing ginbag-o.'), NotifyType.info, tr('Edit cancelled', 'Kinansela', 'Ginkanselar'));
     }
 
     Future.delayed(const Duration(milliseconds: 400), () {
@@ -1880,42 +2193,30 @@ class _DashboardPageState extends State<DashboardPage> {
   Future<void> _removeTanod(int i) async {
     final t = tanods[i];
     final after = tanods.length - i - 1;
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: Colors.white,
-        surfaceTintColor: Colors.white,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        title: Text(tr('Remove ${t.fullName}?', 'Tanggalin si ${t.fullName}?', 'Kuhaon si ${t.fullName}?'), style: serif(22)),
-        content: Text(
-          tr(
-              'They will be taken off the Payroll, Masterlist, Certification and ID sheet.'
-                  '${after > 0 ? ' The $after tanod${after == 1 ? '' : 's'} after award no. ${awardNo(i)} will move up one number.' : ''}',
-              'Matatanggal siya sa Payroll, Masterlist, Certification at ID sheet.'
-                  '${after > 0 ? ' Aakyat ng isang numero ang $after tanod pagkatapos ng award no. ${awardNo(i)}.' : ''}', 'Kuhaon sia sa Payroll, Masterlist, Certification kag ID sheet.' '${after > 0 ? ' Ang $after ka tanod pagkatapos sang award no. ${awardNo(i)} magasaka sing isa ka numero.' : ''}'),
-          style: sans(15.5, color: C.muted, h: 1.5),
-        ),
-        actionsPadding: const EdgeInsets.fromLTRB(24, 0, 24, 20),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: Text(tr('Cancel', 'Kanselahin', 'Kanselaha'), style: sans(14.5, w: FontWeight.w600, color: C.muted)),
-          ),
-          FilledButton.icon(
-            style: FilledButton.styleFrom(backgroundColor: C.red, foregroundColor: Colors.white),
-            onPressed: () => Navigator.pop(ctx, true),
-            icon: const Icon(Icons.delete_outline, size: 18),
-            label: Text(tr('Remove', 'Tanggalin', 'Kuhaon')),
-          ),
-        ],
-      ),
+    final ok = await confirmAction(
+      context,
+      title: tr('Remove ${t.fullName}?', 'Tanggalin si ${t.fullName}?', 'Kuhaon si ${t.fullName}?'),
+      message: tr(
+          'Are you sure? They will be taken off the Payroll, Masterlist, Certification and ID sheet.'
+              '${after > 0 ? ' The $after tanod${after == 1 ? '' : 's'} after award no. ${awardNo(i)} will move up one number.' : ''}',
+          'Sigurado ka ba? Matatanggal siya sa Payroll, Masterlist, Certification at ID sheet.'
+              '${after > 0 ? ' Aakyat ng isang numero ang $after tanod pagkatapos ng award no. ${awardNo(i)}.' : ''}',
+          'Sigurado ka bala? Kuhaon sia sa Payroll, Masterlist, Certification kag ID sheet.'
+              '${after > 0 ? ' Ang $after ka tanod pagkatapos sang award no. ${awardNo(i)} magasaka sing isa ka numero.' : ''}'),
+      confirmLabel: tr('Yes, remove', 'Oo, tanggalin', 'Huo, kuhaon'),
+      danger: true,
     );
-    if (ok != true || !mounted) return;
+    if (!ok || !mounted) return;
     setState(() {
       tanods.removeAt(i);
       _markChanged();
     });
-    _toast(tr('Removed ${t.fullName}. Award numbers were updated.', 'Tinanggal si ${t.fullName}. Na-update ang award number.', 'Gin-kuha si ${t.fullName}. Na-update ang mga award number.'));
+    _toast(
+      tr('${t.fullName} was deleted successfully. Award numbers were updated.', 'Matagumpay na natanggal si ${t.fullName}. Na-update ang award number.',
+          'Malampuson nga nakuha si ${t.fullName}. Na-update ang mga award number.'),
+      NotifyType.success,
+      tr('Deleted successfully', 'Matagumpay na natanggal', 'Malampuson nga nakuha'),
+    );
   }
 
   Widget _submitPanel() {
@@ -1923,54 +2224,70 @@ class _DashboardPageState extends State<DashboardPage> {
     final alertCount = issues.length + rec.outdatedFiles.length;
     final reasons = <String>[
       if (missing > 0)
-        tr('Upload $missing more signed cop${missing == 1 ? 'y' : 'ies'}', 'Mag-upload pa ng $missing pirmadong kopya', 'I-upload pa ang $missing ka may pirma nga kopya'),
-      if (alertCount > 0) tr('fix $alertCount alert${alertCount == 1 ? '' : 's'}', 'ayusin ang $alertCount paalala', 'tadlungon ang $alertCount ka pahanumdom'),
+        tr('Upload $missing more signed cop${missing == 1 ? 'y' : 'ies'}', 'Mag-upload pa ng $missing pirmadong kopya',
+            'Mag-upload pa sang $missing ka may pirma nga kopya'),
+      if (alertCount > 0)
+        tr('fix $alertCount alert${alertCount == 1 ? '' : 's'}', 'ayusin ang $alertCount paalala', 'tadlunga ang $alertCount ka pahanumdom'),
     ];
     final and = tr(' and ', ' at ', ' kag ');
     final String title;
     final String body;
     VoidCallback? onPressed;
-    String label = tr('Submit to $kMunicipality', 'Ipasa sa $kMunicipality', 'Ipasa sa $kMunicipality');
-    var buttonIcon = Icons.send_outlined;
+    String label = tr('Share to Municipality', 'Ibahagi sa Munisipyo', 'Ipaambit sa Munisipyo');
+    var buttonIcon = Icons.share_outlined;
 
     if (corrections) {
-      title = canSendBack ? tr('Corrections are done', 'Tapos na ang pagtatama', 'Tapos na ang pagtadlong') : tr('Fix the corrections first', 'Ayusin muna ang mga itatama', 'Tadlungon anay ang mga sala');
+      title = canSendBack
+          ? tr('Corrections are done', 'Tapos na ang pagtatama', 'Tapos na ang pagtadlong')
+          : tr('Fix the corrections first', 'Ayusin muna ang mga itatama', 'Tadlunga anay ang mga sala');
       body = canSendBack
-          ? tr('Tell $kMunicipality, then bring the corrected paper pages.', 'Sabihan ang $kMunicipality, saka dalhin ang naitamang papel.', 'Ipahibalo sa $kMunicipality, dayon dal-a ang natadlong nga papel.')
-          : tr('Upload the corrected copy of every document $kMunicipality asked about.',
-              'I-upload ang naitamang kopya ng bawat dokumentong binanggit ng $kMunicipality.', 'Palihog i-upload ang natadlong nga kopya sang kada dokumento nga ginpangayo sang $kMunicipality.');
+          ? tr('Tell the Municipality, then bring the corrected paper pages.', 'Sabihan ang Munisipyo, saka dalhin ang naitamang papel.',
+              'Isugid sa Munisipyo, dayon dal-a ang natadlong nga papel.')
+          : tr('Upload the corrected copy of every document the Municipality asked about.',
+              'I-upload ang naitamang kopya ng bawat dokumentong binanggit ng Munisipyo.',
+              'I-upload ang natadlong nga kopya sang kada dokumento nga ginsiling sang Munisipyo.');
       label = tr('Corrections done', 'Tapos na ang pagtatama', 'Tapos na ang pagtadlong');
+      buttonIcon = Icons.send_outlined;
       onPressed = canSendBack ? _sendBack : null;
     } else if (pending) {
-      title = tr('Submitting is locked for now', 'Hindi pa puwedeng magpasa', 'Naka-lock anay ang pagpasa');
-      body = tr('Your account needs $kMunicipality’s approval first. Keep working in the meantime.',
-          'Kailangan munang aprubahan ng $kMunicipality ang inyong account. Magpatuloy muna sa paghahanda.', 'Kinahanglan anay sang aprobasyon sang $kMunicipality ang inyo account. Pwede kamo magpadayon sa pag-obra samtang.');
+      title = tr('Sharing is locked for now', 'Hindi pa puwedeng magbahagi', 'Indi pa puede magpaambit');
+      body = tr('Your account needs the Municipality’s approval first. Keep working in the meantime.',
+          'Kailangan munang aprubahan ng Munisipyo ang inyong account. Magpatuloy muna sa paghahanda.',
+          'Kinahanglan anay aprobahan sang Munisipyo ang inyo account. Padayon anay sa paghanda.');
     } else if (locked) {
       title = switch (rec.status) {
-        BrgyStatus.submitted => tr('With $kMunicipality', 'Nasa $kMunicipality', 'Ara sa $kMunicipality'),
-        BrgyStatus.checked => tr('Checked by $kMunicipality', 'Nasuri na ng $kMunicipality', 'Nausisa na sang $kMunicipality'),
-        BrgyStatus.sentToOppdc => tr('With OPPDC', 'Nasa OPPDC', 'Ara sa OPPDC'),
-        _ => tr('Released', 'Na-release na', 'Na-release'),
+        BrgyStatus.submitted => tr('Shared to Municipality', 'Naibahagi sa Munisipyo', 'Napaambit sa Munisipyo'),
+        BrgyStatus.checked => tr('Reviewed by Municipality', 'Nasuri ng Munisipyo', 'Nausisa sang Munisipyo'),
+        BrgyStatus.sentToOppdc => tr('OPPDC reviewing', 'Sinusuri ng OPPDC', 'Ginausisa sang OPPDC'),
+        _ => tr('Released', 'Na-release na', 'Na-release na'),
       };
       body = switch (rec.status) {
-        BrgyStatus.submitted => tr('The reviewer is checking your paper set. Mistakes come as messages.',
-            'Sinusuri ng reviewer ang inyong papel. Darating bilang mensahe ang anumang mali.', 'Ginausisa sang reviewer ang inyo papel. Ang mga sala maabot bilang mensahe.'),
-        BrgyStatus.checked => tr('Waiting for the other barangays. Then $kMunicipality brings every paper set to OPPDC together.',
-            'Hinihintay ang ibang barangay. Saka sabay-sabay na dadalhin ng $kMunicipality sa OPPDC.', 'Ginahulat ang iban nga barangay. Dayon dungan nga dal-on sang $kMunicipality sa OPPDC ang tanan nga papel.'),
-        BrgyStatus.sentToOppdc => tr('OPPDC has the paper set and can open your uploaded backup.',
-            'Nasa OPPDC na ang papel at mabubuksan nito ang inyong backup.', 'Ara sa OPPDC ang papel kag mabuksan nila ang inyo na-upload nga backup.'),
+        BrgyStatus.submitted => tr(
+            'The Municipality can open your softcopies. The reviewer is checking your paper set; mistakes come as messages.',
+            'Mabubuksan ng Munisipyo ang inyong softcopy. Sinusuri ng reviewer ang papel; darating bilang mensahe ang anumang mali.',
+            'Mabuksan sang Munisipyo ang inyo softcopy. Ginausisa sang reviewer ang papel; magaabot bilang mensahe ang bisan ano nga sala.'),
+        BrgyStatus.checked => tr(
+            'Waiting for the other barangays. Then the Municipality brings every paper set to OPPDC together.',
+            'Hinihintay ang ibang barangay. Saka sabay-sabay na dadalhin ng Munisipyo sa OPPDC.',
+            'Ginahulat ang iban nga barangay. Dayon dungan nga dal-on sang Munisipyo sa OPPDC.'),
+        BrgyStatus.sentToOppdc => tr(
+            'OPPDC has the paper set and can open your shared copies as a backup.',
+            'Nasa OPPDC na ang papel at mabubuksan nito ang inyong naibahaging kopya bilang backup.',
+            'Ara na sa OPPDC ang papel kag mabuksan sini ang inyo napaambit nga kopya bilang backup.'),
         _ => tr('This year is done. Next year starts with the same tanod list.',
-            'Tapos na ngayong taon. Magsisimula ang susunod na taon sa parehong listahan.', 'Tapos na ini nga tuig. Ang masunod nga tuig magsugod sa amo man nga listahan sang tanod.'),
+            'Tapos na ngayong taon. Magsisimula ang susunod na taon sa parehong listahan.',
+            'Tapos na subong nga tuig. Magasugod ang masunod nga tuig sa amo man nga listahan.'),
       };
-      label = tr('Submitted', 'Naipasa na', 'Napasa na');
+      label = tr('Shared', 'Naibahagi na', 'Napaambit na');
       buttonIcon = Icons.check;
     } else if (canSubmit) {
-      title = tr('Ready to submit', 'Handa nang ipasa', 'Handa na ipasa');
-      body = tr('All signed copies are uploaded. Submit here, then bring the signed paper set to $kMunicipality.',
-          'Na-upload na ang lahat ng pirmadong kopya. Ipasa dito, saka dalhin ang pirmadong papel sa $kMunicipality.', 'Na-upload na ang tanan nga may pirma nga kopya. Ipasa diri, dayon dal-a ang may pirma nga papel sa $kMunicipality.');
+      title = tr('Ready to share', 'Handa nang ibahagi', 'Handa na ipaambit');
+      body = tr('All signed copies are uploaded. Share them so the Municipality can open the softcopies, then bring the signed paper set.',
+          'Na-upload na ang lahat ng pirmadong kopya. Ibahagi para mabuksan ng Munisipyo ang softcopy, saka dalhin ang pirmadong papel.',
+          'Na-upload na ang tanan nga may pirma nga kopya. Ipaambit para mabuksan sang Munisipyo ang softcopy, dayon dal-a ang may pirma nga papel.');
       onPressed = _submit;
     } else {
-      title = tr('Not ready to submit yet', 'Hindi pa handang ipasa', 'Indi pa handa ipasa');
+      title = tr('Not ready to share yet', 'Hindi pa handang ibahagi', 'Indi pa handa ipaambit');
       body = '${reasons.join(and)}.';
     }
 
@@ -2075,7 +2392,11 @@ class _DashboardPageState extends State<DashboardPage> {
             rec: rec,
             asMunicipality: false,
             height: 460,
-            onSend: (text, doc) => setState(() => rec.post(fromMunicipality: false, text: text, doc: doc)),
+            onSend: (text, doc) {
+              setState(() => rec.post(fromMunicipality: false, text: text, doc: doc));
+              _toast(tr('Your message was sent to $kMunicipality.', 'Naipadala ang mensahe sa $kMunicipality.', 'Napadala na ang mensahe sa $kMunicipality.'),
+                  NotifyType.success, tr('Message sent', 'Naipadala', 'Napadala'));
+            },
             onUploadFix: _upload,
           ),
         ),
@@ -2090,53 +2411,40 @@ class _DashboardPageState extends State<DashboardPage> {
           ]),
         );
 
-    Widget choice<T>(String label, String hint, T current, List<(T, String)> options, void Function(T) onPick) =>
+    // [colors]: optional colour for each option (same order). Without it, all use navy.
+    Widget choice<T>(String label, String hint, T current, List<(T, String)> options, void Function(T) onPick,
+            {List<Color>? colors}) =>
         Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Text(label, style: sans(15.5, w: FontWeight.w700, color: C.navy)),
           const SizedBox(height: 2),
           Text(hint, style: sans(14, color: C.muted)),
           const SizedBox(height: 10),
           Wrap(spacing: 8, runSpacing: 8, children: [
-            for (final (value, text) in options)
-              ChoiceChip(
-                label: Text(text, style: sans(15, w: FontWeight.w600, color: value == current ? Colors.white : C.navy)),
-                selected: value == current,
-                showCheckmark: false,
-                selectedColor: C.navy,
-                backgroundColor: Colors.white,
-                side: BorderSide(color: value == current ? C.navy : C.line, width: 1.5),
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                onSelected: (_) => onPick(value),
-              ),
+            for (var i = 0; i < options.length; i++)
+              Builder(builder: (context) {
+                final (value, text) = options[i];
+                final on = value == current;
+                final c = colors == null ? C.navy : colors[i];
+                // Yellow is light, so it gets dark text when selected
+                final onText = c == C.yellowDark ? C.navy : Colors.white;
+                return ChoiceChip(
+                  label: Text(text, style: sans(15, w: FontWeight.w600, color: on ? onText : (colors == null ? C.navy : c))),
+                  selected: on,
+                  showCheckmark: false,
+                  selectedColor: c,
+                  backgroundColor: colors == null ? Colors.white : c.withValues(alpha: .08),
+                  side: BorderSide(color: on ? c : (colors == null ? C.line : c.withValues(alpha: .45)), width: 1.5),
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                  onSelected: (_) => onPick(value),
+                );
+              }),
           ]),
         ]);
 
     return _scroll([
       _pageIntro(tr('Account', 'Account', 'Account'), tr('Your details and how Gawad looks for you.', 'Ang inyong detalye at kung paano lumalabas ang Gawad.', 'Ang inyo detalye kag kon paano makita ang Gawad.')),
       const SizedBox(height: 20),
-      _Panel(
-        title: tr('Display', 'Itsura', 'Itsura'),
-        icon: Icons.text_fields_rounded,
-        child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-          choice<double>(
-            tr('Text size', 'Laki ng letra', 'Kadako sang letra'),
-            tr('Make words bigger if they’re hard to read.', 'Palakihin ang letra kung mahirap basahin.', 'Padakua ang letra kon budlay basahon.'),
-            textSize.value,
-            [(1.0, tr('Normal', 'Normal', 'Normal')), (1.15, tr('Large', 'Malaki', 'Dako')), (1.3, tr('Larger', 'Mas malaki', 'Mas dako'))],
-            (v) => textSize.value = v,
-          ),
-          const SizedBox(height: 22),
-          choice<String>(
-            tr('Language', 'Wika', 'Pinulongan'),
-            tr('Filipino is a first draft; some screens are still in English.',
-                'Unang bersyon pa lang ang Filipino; may mga screen na English pa.', 'Una nga bersyon pa lang ang Filipino kag Hiligaynon; may mga screen nga English pa.'),
-            appLang.value,
-            [('en', 'English'), ('fil', 'Filipino'), ('hil', 'Hiligaynon')],
-            (v) => setState(() => appLang.value = v), // redraw this screen in the new language
-          ),
-        ]),
-      ),
-      const SizedBox(height: 20),
+      // Account details first, then display settings
       _Panel(
         child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
           Row(children: [
@@ -2150,11 +2458,11 @@ class _DashboardPageState extends State<DashboardPage> {
               child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                 Text(kRepName, style: serif(24)),
                 const SizedBox(height: 4),
-                pending
-                    ? _pill(tr('Waiting for $kMunicipality’s approval', 'Hinihintay ang apruba ng $kMunicipality', 'Ginahulat ang aprobasyon sang $kMunicipality'),
+                                pending
+                    ? _pill(tr('Waiting for the Municipality’s approval', 'Hinihintay ang apruba ng Munisipyo', 'Ginahulat ang pag-aprobar sang Munisipyo'),
                         const Color(0xFFFFF4CC), const Color(0xFF7A5B00),
                         icon: Icons.hourglass_top_rounded)
-                    : _pill(tr('Approved by $kMunicipality', 'Inaprubahan ng $kMunicipality', 'Gin-aprobahan sang $kMunicipality'), C.greenSoft,
+                    : _pill(tr('Approved by the Municipality', 'Inaprubahan ng Munisipyo', 'Gin-aprobahan sang Munisipyo'), C.greenSoft,
                         const Color(0xFF14583D), icon: Icons.verified_outlined),
               ]),
             ),
@@ -2180,6 +2488,38 @@ class _DashboardPageState extends State<DashboardPage> {
               icon: const Icon(Icons.logout, size: 18),
               label: Text(tr('Sign out', 'Mag-sign out', 'Mag-sign out'), style: sans(15, w: FontWeight.w600, color: C.red)),
             ),
+          ),
+        ]),
+      ),
+      const SizedBox(height: 20),
+      _Panel(
+        title: tr('Display', 'Itsura', 'Itsura'),
+        icon: Icons.text_fields_rounded,
+        child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          choice<double>(
+            tr('Text size', 'Laki ng letra', 'Kadakuon sang letra'),
+            tr('Make words bigger if they’re hard to read.', 'Palakihin ang letra kung mahirap basahin.', 'Padakua ang letra kon budlay basahon.'),
+            textSize.value,
+            [(1.0, tr('Normal', 'Normal', 'Normal')), (1.15, tr('Large', 'Malaki', 'Dako')), (1.3, tr('Larger', 'Mas malaki', 'Mas dako'))],
+            (v) {
+              textSize.value = v;
+              _toast(tr('Text size changed.', 'Napalitan ang laki ng letra.', 'Nabag-o ang kadakuon sang letra.'), NotifyType.info,
+                  tr('Display updated', 'Na-update ang itsura', 'Na-update ang itsura'));
+            },
+            colors: const [C.blue, C.green, C.yellowDark], // Normal, Large, Larger
+          ),
+          const SizedBox(height: 22),
+          choice<String>(
+            tr('Language', 'Wika', 'Lenggwahe'),
+            tr('Filipino and Hiligaynon are first drafts; some screens are still in English.',
+                'Unang bersyon pa lang ang Filipino at Hiligaynon; may mga screen na English pa.', 'Una nga bersyon pa lang ang Filipino kag Hiligaynon; may mga screen nga English pa.'),
+            appLang.value,
+            [('en', 'English'), ('fil', 'Filipino'), ('hil', 'Hiligaynon')],
+            (v) {
+              setState(() => appLang.value = v); // redraw this screen in the new language
+              _toast(tr('Language set to English.', 'Filipino na ang wika.', 'Hiligaynon na ang lenggwahe.'), NotifyType.info,
+                  tr('Language changed', 'Napalitan ang wika', 'Nabag-o ang lenggwahe'));
+            },
           ),
         ]),
       ),
@@ -2393,6 +2733,7 @@ class _StatTile extends StatelessWidget {
   final String value, label, note;
   final double? progress;
   final String? help;
+  final VoidCallback? onView; // shows a "View" button on the side of the tile
   const _StatTile({
     required this.icon,
     required this.tint,
@@ -2401,6 +2742,7 @@ class _StatTile extends StatelessWidget {
     required this.note,
     this.progress,
     this.help,
+    this.onView,
   });
 
   @override
@@ -2422,6 +2764,18 @@ class _StatTile extends StatelessWidget {
               visualDensity: VisualDensity.compact,
               onPressed: () => explain(context, label, help!),
               icon: const Icon(Icons.help_outline_rounded, size: 20, color: C.blue),
+            ),
+          if (onView != null)
+            TextButton(
+              style: TextButton.styleFrom(
+                foregroundColor: tint,
+                backgroundColor: tint.withValues(alpha: .1),
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                minimumSize: const Size(0, 34),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(9)),
+              ),
+              onPressed: onView,
+              child: Text(tr('View', 'Tingnan', 'Tan-awa'), style: sans(14, w: FontWeight.w700, color: tint)),
             ),
         ]),
         const SizedBox(height: 16),

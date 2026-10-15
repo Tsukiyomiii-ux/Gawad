@@ -122,7 +122,11 @@ class _CheckPageState extends State<CheckPage> {
         tr('Sent. Brgy. ${b.name} will correct the ${doc.title} and upload the corrected copy.',
             'Naipadala. Itatama ng Brgy. ${b.name} ang ${doc.title} at ia-upload ang naitamang kopya.',
             'Napadala. Tadlungon sang Brgy. ${b.name} ang ${doc.title} kag i-upload ang natadlong nga kopya.'),
+        title: tr('Correction sent', 'Naipadala ang pagtatama', 'Napadala ang pagtadlong'),
       );
+    } else {
+      toast(context, tr('Your message was sent to Brgy. ${b.name}.', 'Naipadala ang mensahe sa Brgy. ${b.name}.', 'Napadala ang mensahe sa Brgy. ${b.name}.'),
+          title: tr('Message sent', 'Naipadala', 'Napadala'));
     }
   }
 
@@ -206,40 +210,24 @@ class _CheckPageState extends State<CheckPage> {
   }
 
   Future<void> _markChecked() async {
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: Colors.white,
-        surfaceTintColor: Colors.white,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        title: Text(tr('Mark Brgy. ${b.name} as checked?', 'Markahang nasuri na ang Brgy. ${b.name}?',
-            'Markahan nga nausisa na ang Brgy. ${b.name}?'), style: serif(23)),
-        content: Text(
-          tr('The paper set is complete and correct, and the backup copies match. It goes with the other barangays to OPPDC.',
-              'Kumpleto at tama ang papel, at tugma ang backup. Isasama ito sa ibang barangay papunta sa OPPDC.',
-              'Kompleto kag husto ang papel, kag pareho ang backup. Iupod ini sa iban nga barangay pakadto sa OPPDC.'),
-          style: sans(15.5, color: C.muted, h: 1.5),
-        ),
-        actionsPadding: const EdgeInsets.fromLTRB(20, 0, 20, 18),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: Text(tr('Not yet', 'Hindi pa', 'Indi pa'), style: sans(15, w: FontWeight.w600, color: C.muted)),
-          ),
-          FilledButton(
-            style: primaryStyle(bg: C.green, fg: Colors.white),
-            onPressed: () => Navigator.pop(ctx, true),
-            child: Text(tr('Mark as checked', 'Markahang nasuri', 'Markahan nga nausisa')),
-          ),
-        ],
-      ),
+    final ok = await confirmAction(
+      context,
+      title: tr('Mark Brgy. ${b.name} as checked?', 'Markahang nasuri na ang Brgy. ${b.name}?',
+          'Markahan nga nausisa na ang Brgy. ${b.name}?'),
+      message: tr('The paper set is complete and correct, and the backup copies match. It goes with the other barangays to OPPDC.',
+          'Kumpleto at tama ang papel, at tugma ang backup. Isasama ito sa ibang barangay papunta sa OPPDC.',
+          'Kompleto kag husto ang papel, kag pareho ang backup. Iupod ini sa iban nga barangay pakadto sa OPPDC.'),
+      confirmLabel: tr('Mark as checked', 'Markahang nasuri', 'Markahan nga nausisa'),
+      cancelLabel: tr('Not yet', 'Hindi pa', 'Indi pa'),
+      icon: Icons.verified_outlined,
     );
-    if (ok != true || !mounted) return;
+    if (!ok || !mounted) return;
     setState(() {
       b.status = BrgyStatus.checked;
       b.post(fromMunicipality: true, system: true, text: 'Paper set checked. Nothing to fix. Thank you!');
     });
-    toast(context, tr('Brgy. ${b.name} is checked.', 'Nasuri na ang Brgy. ${b.name}.', 'Nausisa na ang Brgy. ${b.name}.'));
+    toast(context, tr('Brgy. ${b.name} is checked.', 'Nasuri na ang Brgy. ${b.name}.', 'Nausisa na ang Brgy. ${b.name}.'),
+        title: tr('Barangay checked', 'Nasuri ang barangay', 'Nausisa ang barangay'));
   }
 
   // ---------- layout ----------
@@ -572,7 +560,14 @@ class _CheckPageState extends State<CheckPage> {
           if (canReview && !ok)
             FilledButton.icon(
               style: primaryStyle(bg: C.green, fg: Colors.white),
-              onPressed: f.correction ? null : () => setState(() => b.paperOk.add(k)),
+              onPressed: f.correction
+                  ? null
+                  : () {
+                      setState(() => b.paperOk.add(k));
+                      toast(context, tr('${k.title} marked as correct. ${b.paperOk.length} of 4 done.',
+                          'Tama ang ${k.title}. ${b.paperOk.length} sa 4 tapos.', 'Husto ang ${k.title}. ${b.paperOk.length} sa 4 human.'),
+                          title: tr('Paper is correct', 'Tama ang papel', 'Husto ang papel'));
+                    },
               icon: const Icon(Icons.check_rounded, size: 18),
               label: Text(f.correction
                   ? tr('Waiting for correction', 'Hinihintay ang pagtatama', 'Ginahulat ang pagtadlong')
@@ -581,7 +576,11 @@ class _CheckPageState extends State<CheckPage> {
           if (canReview && ok)
             TextButton.icon(
               style: TextButton.styleFrom(foregroundColor: C.muted, minimumSize: const Size(0, 48)),
-              onPressed: () => setState(() => b.paperOk.remove(k)),
+              onPressed: () {
+                setState(() => b.paperOk.remove(k));
+                toast(context, tr('${k.title} is back to not checked.', 'Hindi pa nasuri ulit ang ${k.title}.', 'Wala pa nausisa liwat ang ${k.title}.'),
+                    type: NotifyType.info, title: tr('Undone', 'Ibinalik', 'Ginbalik'));
+              },
               icon: const Icon(Icons.undo_rounded, size: 18),
               label: Text(tr('Undo', 'Ibalik', 'Balik'), style: sans(15, w: FontWeight.w600, color: C.muted)),
             ),

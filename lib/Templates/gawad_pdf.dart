@@ -14,6 +14,7 @@ import 'payroll_template.dart';
 import 'masterlist_template.dart';
 import 'certification_template.dart';
 import 'id_photocopy.dart';
+import 'package:tanod_incentives/widgets/notify.dart'; // top pop-ups
 
 Future<Uint8List> buildOfficialPdf(BrgyRecord rec, DocKind kind) {
   final people = personsFor(rec);
@@ -42,12 +43,8 @@ String officialPdfName(BrgyRecord rec, DocKind kind) => '${kind.title} - Brgy ${
 /// Opens the filled PDF with print / share / save buttons.
 Future<void> showOfficialPdf(BuildContext context, BrgyRecord rec, DocKind kind) {
   if (rec.tanods.isEmpty) {
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(SnackBar(
-        content: Text(tr('Add at least one tanod first.', 'Magdagdag muna ng kahit isang tanod.', 'Palihog magdugang anay sang bisan isa ka tanod.')),
-        behavior: SnackBarBehavior.floating,
-      ));
+    notify(context, tr('Add at least one tanod first.', 'Magdagdag muna ng kahit isang tanod.', 'Palihog magdugang anay sang bisan isa ka tanod.'),
+        type: NotifyType.warning, title: tr('No tanods yet', 'Wala pang tanod', 'Wala pa sang tanod'));
     return Future.value();
   }
   return Navigator.of(context).push(

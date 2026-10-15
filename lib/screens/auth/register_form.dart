@@ -4,6 +4,8 @@ import 'package:tanod_incentives/theme.dart';
 import 'package:tanod_incentives/data/areas.dart';
 import 'package:tanod_incentives/widgets/app_field.dart';
 import 'package:tanod_incentives/widgets/yellow_button.dart';
+import 'package:tanod_incentives/widgets/notify.dart'; // top pop-ups
+import 'package:tanod_incentives/widgets/upload_sheet.dart'; // camera / file picker
 
 // ---------------- Register ----------------
 class RegisterForm extends StatefulWidget {
@@ -25,6 +27,82 @@ class _RegisterFormState extends State<RegisterForm> {
   String? muni, brgy;
   int strength = 0;
 
+  // Proof of designation: a photo or file (PDF/JPG/PNG). Optional.
+  // Kept here until the backend can receive it with the request.
+  UploadedFile? proof;
+  bool picking = false;
+
+  Future<void> _attachProof(bool camera) async {
+    setState(() => picking = true);
+    try {
+      final f = camera ? await takePhotoUpload() : await chooseFileUpload();
+      if (f != null && mounted) {
+        setState(() => proof = f);
+        notify(context, tr('${f.name} is attached.', 'Naka-attach na ang ${f.name}.', 'Naka-attach na ang ${f.name}.'),
+            title: tr('Proof attached', 'Naka-attach ang patunay', 'Naka-attach ang pamatuod'));
+      }
+    } catch (e) {
+      if (mounted) {
+        notify(context, tr('Couldn’t open that: $e', 'Hindi mabuksan: $e', 'Indi mabuksan: $e'), type: NotifyType.error);
+      }
+    } finally {
+      if (mounted) setState(() => picking = false);
+    }
+  }
+
+  // Buttons + attached file, shown under the "Designation or proof" field.
+  Widget _proofPicker() {
+    final btn = OutlinedButton.styleFrom(
+      foregroundColor: C.navy,
+      side: const BorderSide(color: C.line, width: 1.5),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+    );
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      const SizedBox(height: 8),
+      if (proof != null)
+        Container(
+          padding: const EdgeInsets.fromLTRB(10, 6, 4, 6),
+          decoration: BoxDecoration(color: C.greenSoft, borderRadius: BorderRadius.circular(10)),
+          child: Row(children: [
+            Icon(proof!.isPdf ? Icons.picture_as_pdf_outlined : Icons.image_outlined, size: 18, color: C.green),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(proof!.name,
+                  overflow: TextOverflow.ellipsis, style: sans(13.5, w: FontWeight.w600, color: const Color(0xFF14583D))),
+            ),
+            IconButton(
+              tooltip: 'Remove',
+              visualDensity: VisualDensity.compact,
+              onPressed: () {
+                setState(() => proof = null);
+                notify(context, tr('Proof removed.', 'Inalis ang patunay.', 'Ginkuha ang pamatuod.'), type: NotifyType.info);
+              },
+              icon: const Icon(Icons.close_rounded, size: 18, color: C.muted),
+            ),
+          ]),
+        )
+      else
+        Wrap(spacing: 8, runSpacing: 8, children: [
+          if (hasCamera)
+            OutlinedButton.icon(
+              style: btn,
+              onPressed: picking ? null : () => _attachProof(true),
+              icon: const Icon(Icons.photo_camera_outlined, size: 18),
+              label: Text('Take a photo', style: sans(14, w: FontWeight.w600, color: C.navy)),
+            ),
+          OutlinedButton.icon(
+            style: btn,
+            onPressed: picking ? null : () => _attachProof(false),
+            icon: const Icon(Icons.attach_file_rounded, size: 18),
+            label: Text('Attach file', style: sans(14, w: FontWeight.w600, color: C.navy)),
+          ),
+        ]),
+      const SizedBox(height: 4),
+      Text('A photo or PDF of your appointment or designation letter.', style: sans(12.5, color: C.muted)),
+    ]);
+  }
+
   @override
   void dispose() {
     for (final c in [_name, _pos, _mob, _note, _pw, _pw2]) {
@@ -44,8 +122,14 @@ class _RegisterFormState extends State<RegisterForm> {
   }
 
   void _submit() {
-    if (!_key.currentState!.validate()) return;
+    if (!_key.currentState!.validate()) {
+      notify(context, tr('Please fill in the boxes marked in red.', 'Pakisagutan ang mga kahong may pula.', 'Palihog sabti ang mga kahon nga may pula.'),
+          type: NotifyType.warning, title: tr('Almost there', 'Kaunti na lang', 'Diutay na lang'));
+      return;
+    }
     widget.onSubmitted(_name.text.trim(), _pos.text.trim(), brgy!, muni!);
+    notify(context, tr('Your request was sent to $muni for approval.', 'Naipadala sa $muni ang iyong request.', 'Napadala na sa $muni ang imo request.'),
+        title: tr('Request sent', 'Naipadala ang request', 'Napadala ang request'));
   }
 
   Widget _dropdown({
@@ -208,6 +292,7 @@ class _RegisterFormState extends State<RegisterForm> {
               hint: 'e.g. Appointed January 2026',
               required: false,
               optional: true,
+              below: _proofPicker(), // photo or file of the proof
             ),
           ),
 

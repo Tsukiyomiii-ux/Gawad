@@ -275,16 +275,18 @@ Future<Uint8List> generatePayrollPdf({
                         ),
                         child: pw.Row(
                           children: [
-                            _box(awardNum, flex: 7),
-                            _box(tanod.fullName, flex: 24, bold: true, alignLeft: true),
-                            _box('BARANGAY TANOD', flex: 20),
+                            // Every cell gets the same height so the column lines run the full row
+                            // (empty cells like REMARKS / SIGNATURE used to show only a tiny tick)
+                            _box(awardNum, flex: 7, height: _rowH),
+                            _box(tanod.fullName, flex: 24, bold: true, alignLeft: true, height: _rowH),
+                            _box('BARANGAY TANOD', flex: 20, height: _rowH),
                             // Address from the tanod's ID (falls back to the filing barangay)
-                            _box(tanod.addressBarangay, flex: 13),
-                            _box(tanod.addressMunicipality, flex: 13),
-                            _box(defaultAmount.toStringAsFixed(2), flex: 11, alignRight: true),
-                            _box(awardNum, flex: 7),
-                            _box('', flex: 10),
-                            _box('', flex: 15, isLast: true),
+                            _box(tanod.addressBarangay, flex: 13, height: _rowH),
+                            _box(tanod.addressMunicipality, flex: 13, height: _rowH),
+                            _box(defaultAmount.toStringAsFixed(2), flex: 11, alignRight: true, height: _rowH),
+                            _box(awardNum, flex: 7, height: _rowH),
+                            _box('', flex: 10, height: _rowH),
+                            _box('', flex: 15, isLast: true, height: _rowH),
                           ],
                         ),
                       );
@@ -431,6 +433,9 @@ Future<Uint8List> generatePayrollPdf({
 
   return pdf.save();
 }
+
+// Height of one tanod row in the payroll table
+const double _rowH = 14;
 
 // Table cell helper
 pw.Widget _box(

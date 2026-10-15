@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 
 import 'package:tanod_incentives/theme.dart';
+import 'package:tanod_incentives/widgets/notify.dart'; // top pop-ups
 
 /// What the person picked in the upload sheet.
 class UploadedFile {
@@ -29,8 +30,39 @@ Future<UploadedFile?> showUploadSheet(BuildContext context, {required String doc
   );
 }
 
-// The camera only works on phones; desktops choose a file instead.
-bool get _hasCamera =>
+/// Opens the camera and returns the photo, or null if cancelled.
+/// Also used by the Request access form (proof of designation).
+Future<UploadedFile?> takePhotoUpload() async {
+  final x = await ImagePicker().pickImage(
+    source: ImageSource.camera,
+    maxWidth: 2200, // sharp enough to read, small enough to store
+    imageQuality: 85,
+  );
+  if (x == null) return null;
+  return UploadedFile(via: 'photo', bytes: await x.readAsBytes(), name: x.name, isPdf: false);
+}
+
+/// Lets the person pick a PDF / JPG / PNG, or null if cancelled.
+/// Also used by the Request access form (proof of designation).
+Future<UploadedFile?> chooseFileUpload() async {
+  const types = XTypeGroup(
+    label: 'PDF or picture',
+    extensions: ['pdf', 'jpg', 'jpeg', 'png'],
+    mimeTypes: ['application/pdf', 'image/jpeg', 'image/png'], // needed on Android
+    uniformTypeIdentifiers: ['com.adobe.pdf', 'public.jpeg', 'public.png'], // needed on iOS/macOS
+  );
+  final f = await openFile(acceptedTypeGroups: const [types]);
+  if (f == null) return null;
+  return UploadedFile(
+    via: 'file',
+    bytes: await f.readAsBytes(),
+    name: f.name,
+    isPdf: f.name.toLowerCase().endsWith('.pdf'),
+  );
+}
+
+/// The camera only works on phones; desktops choose a file instead.
+bool get hasCamera =>
     !kIsWeb && (defaultTargetPlatform == TargetPlatform.android || defaultTargetPlatform == TargetPlatform.iOS);
 
 class _UploadSheet extends StatefulWidget {
@@ -58,38 +90,12 @@ class _UploadSheetState extends State<_UploadSheet> {
     } catch (e) {
       if (!mounted) return;
       setState(() => busy = null);
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text(tr('Couldn’t open that: $e', 'Hindi mabuksan: $e', 'Indi mabuksan: $e')),
-        behavior: SnackBarBehavior.floating,
-      ));
+      notify(context, tr('Couldn’t open that: $e', 'Hindi mabuksan: $e', 'Indi mabuksan: $e'), type: NotifyType.error);
     }
   }
 
-  Future<UploadedFile?> _takePhoto() async {
-    final x = await ImagePicker().pickImage(
-      source: ImageSource.camera,
-      maxWidth: 2200, // sharp enough to read, small enough to store
-      imageQuality: 85,
-    );
-    if (x == null) return null;
-    return UploadedFile(via: 'photo', bytes: await x.readAsBytes(), name: x.name, isPdf: false);
-  }
-
-  Future<UploadedFile?> _chooseFile() async {
-    const types = XTypeGroup(
-      label: 'PDF or picture',
-      extensions: ['pdf', 'jpg', 'jpeg', 'png'],
-      mimeTypes: ['application/pdf', 'image/jpeg', 'image/png'], // needed on Android
-    );
-    final f = await openFile(acceptedTypeGroups: const [types]);
-    if (f == null) return null;
-    return UploadedFile(
-      via: 'file',
-      bytes: await f.readAsBytes(),
-      name: f.name,
-      isPdf: f.name.toLowerCase().endsWith('.pdf'),
-    );
-  }
+  Future<UploadedFile?> _takePhoto() => takePhotoUpload();
+  Future<UploadedFile?> _chooseFile() => chooseFileUpload();
 
   Widget _option(String via, IconData icon, String title, String sub) {
     return Material(
@@ -175,7 +181,7 @@ class _UploadSheetState extends State<_UploadSheet> {
               ]),
             ),
           ] else ...[
-            if (_hasCamera) ...[
+            if (hasCamera) ...[
               _option(
                 'photo',
                 Icons.photo_camera_outlined,

@@ -6,6 +6,8 @@ import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart
 import 'package:tanod_incentives/Templates/payroll_template.dart'; // MERGE: TanodPerson
 import 'id_parser.dart';
 import 'id_image_tools.dart';
+import 'package:tanod_incentives/Scanner/id_camera_screen.dart';
+import 'package:tanod_incentives/widgets/notify.dart'; // top pop-ups
 
 /// OCR scanner (used when there is no internet).
 /// Pops a [TanodPerson] back to the masterlist when "Confirm Details" is tapped.
@@ -26,7 +28,6 @@ class IdScannerScreen extends StatefulWidget {
 }
 
 class _IdScannerScreenState extends State<IdScannerScreen> {
-  final ImagePicker _picker = ImagePicker();
   final TextRecognizer _textRecognizer = TextRecognizer(script: TextRecognitionScript.latin);
 
   final TextEditingController _firstNameController = TextEditingController();
@@ -85,28 +86,41 @@ class _IdScannerScreenState extends State<IdScannerScreen> {
         IdField.address => _addressController,
       };
 
-  Future<XFile?> _capture() {
-    return _picker.pickImage(
-      source: ImageSource.camera,
-      maxWidth: 1600, // a bit more resolution: the card is only part of the photo
-      maxHeight: 1600,
-      imageQuality: 90,
+  // UPGRADE: our own camera with an ID-shaped guide. The shutter only unlocks
+  // when the card's 4 edges line up with the frame (Scanner/id_camera_screen.dart).
+  Future<XFile?> _capture({String title = 'Scan the ID'}) {
+    return Navigator.push<XFile>(
+      context,
+      MaterialPageRoute(builder: (_) => IdCameraScreen(title: title)),
     );
   }
 
+  // Top pop-up; the color picks the style (green = done, orange = check, red = problem)
   void _showMessage(String text, Color color) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(text), backgroundColor: color, duration: const Duration(seconds: 2)),
-    );
+    final type = color == Colors.green
+        ? NotifyType.success
+        : color == Colors.red
+            ? NotifyType.error
+            : NotifyType.warning;
+    notify(context, text, type: type);
   }
 
   void _setStatus(String text) {
     if (mounted) setState(() => _statusText = text);
   }
 
+  /// One button: front first, then straight to the back (like the PhilSys scan).
+  /// Stops if the person backs out of the camera.
+  Future<void> _scanBoth() async {
+    final before = _frontCard;
+    await _scanFront();
+    if (!mounted || _frontCard == null || identical(_frontCard, before)) return; // front cancelled
+    await _scanBack();
+  }
+
   Future<void> _scanFront() async {
-    final XFile? image = await _capture();
+    final XFile? image = await _capture(title: 'Front of the ID');
     if (image == null) return;
 
     setState(() {
@@ -156,11 +170,11 @@ class _IdScannerScreenState extends State<IdScannerScreen> {
       });
 
       if (gemini == null) {
-        _showMessage('Read offline — please double-check all fields', Colors.orange);
+        _showMessage('Front photo saved. Read offline — please double-check all fields', Colors.orange);
       } else if (quality.ok) {
-        _showMessage('Front scanned — readable and cross-checked', Colors.green);
+        _showMessage('Front photo saved — readable and cross-checked', Colors.green);
       } else {
-        _showMessage('Front scanned — see the scan quality notes', Colors.orange);
+        _showMessage('Front photo saved — see the scan quality notes', Colors.orange);
       }
     } catch (e) {
       _showMessage('Scan Error: $e', Colors.red);
@@ -175,7 +189,7 @@ class _IdScannerScreenState extends State<IdScannerScreen> {
   }
 
   Future<void> _scanBack() async {
-    final XFile? image = await _capture();
+    final XFile? image = await _capture(title: 'Back of the ID');
     if (image == null) return;
 
     setState(() {
@@ -205,7 +219,7 @@ class _IdScannerScreenState extends State<IdScannerScreen> {
       });
 
       _showMessage(
-        quality.ok ? 'Back scanned — readable' : 'Back scanned — see the scan quality notes',
+        quality.ok ? 'Back photo saved — readable' : 'Back photo saved — see the scan quality notes',
         quality.ok ? Colors.green : Colors.orange,
       );
     } catch (e) {
@@ -292,7 +306,7 @@ class _IdScannerScreenState extends State<IdScannerScreen> {
     );
   }
 
-  Widget _qualityCard(String side, Uint8List? card, SideQuality? q) {
+  Widget _qualityCard(String side, Uint8List? card, SideQuality? q, VoidCallback onRetake) {
     if (card == null || q == null) return const SizedBox.shrink();
     final color = q.ok ? Colors.green : Colors.orange;
 
@@ -335,14 +349,16 @@ class _IdScannerScreenState extends State<IdScannerScreen> {
                   const SizedBox(height: 4),
                   for (final p in q.problems) _qualityLine(Icons.close, Colors.orange.shade800, p),
                   for (final p in q.passed) _qualityLine(Icons.check, Colors.green.shade700, p),
-                  if (!q.ok)
-                    Padding(
-                      padding: const EdgeInsets.only(top: 4),
-                      child: Text(
-                        'Tap "Retake $side" to scan again.',
-                        style: TextStyle(fontSize: 11, color: Colors.grey.shade700),
-                      ),
+                  // Retake just this side
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: TextButton.icon(
+                      style: TextButton.styleFrom(padding: EdgeInsets.zero, visualDensity: VisualDensity.compact),
+                      onPressed: _isProcessing ? null : onRetake,
+                      icon: const Icon(Icons.replay_rounded, size: 16),
+                      label: Text('Retake $side', style: const TextStyle(fontSize: 12)),
                     ),
+                  ),
                 ],
               ),
             ),
@@ -433,24 +449,12 @@ class _IdScannerScreenState extends State<IdScannerScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Row(
-              children: [
-                Expanded(
-                  child: ElevatedButton.icon(
-                    onPressed: _isProcessing ? null : _scanFront,
-                    icon: Icon(_frontCard == null ? Icons.camera_front : Icons.check_circle),
-                    label: Text(_frontCard == null ? 'Scan Front' : 'Retake Front'),
-                  ),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: ElevatedButton.icon(
-                    onPressed: _isProcessing ? null : _scanBack,
-                    icon: Icon(_backCard == null ? Icons.camera_rear : Icons.check_circle),
-                    label: Text(_backCard == null ? 'Scan Back' : 'Retake Back'),
-                  ),
-                ),
-              ],
+            // One Scan button: front, then back
+            ElevatedButton.icon(
+              style: ElevatedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 14)),
+              onPressed: _isProcessing ? null : _scanBoth,
+              icon: Icon(_frontCard == null ? Icons.document_scanner_outlined : Icons.replay_rounded),
+              label: Text(_frontCard == null ? 'Scan ID (front, then back)' : 'Scan again'),
             ),
             const SizedBox(height: 6),
             const Text(
@@ -475,8 +479,8 @@ class _IdScannerScreenState extends State<IdScannerScreen> {
                 style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
               ),
               const SizedBox(height: 10),
-              _qualityCard('Front', _frontCard, _frontQuality),
-              _qualityCard('Back', _backCard, _backQuality),
+              _qualityCard('Front', _frontCard, _frontQuality, _scanFront),
+              _qualityCard('Back', _backCard, _backQuality, _scanBack),
             ],
             const SizedBox(height: 20),
             const Text(

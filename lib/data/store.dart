@@ -17,6 +17,8 @@ import 'dart:typed_data';
 import 'package:tanod_incentives/theme.dart';
 import 'package:tanod_incentives/data/demo_data.dart';
 import 'package:tanod_incentives/data/doc_kind.dart';
+import 'package:tanod_incentives/data/demo_tanods.dart';
+
 
 const kReviewerName = 'Liza M. Tolentino';
 const kReviewerFirstName = 'Liza';
@@ -250,7 +252,8 @@ List<BrgyRecord> _barangays() {
     position: kRepPosition,
     captain: kCaptain,
     quota: kQuota,
-    tanods: [], // filled only from scanned / typed IDs
+    tanods: demoTanods(), // TEMP: dummy tanods for testing
+    // tanods: [], // filled only from scanned / typed IDs
     files: filesWith(0),
     status: BrgyStatus.preparing,
     updated: 'Oct 14',
