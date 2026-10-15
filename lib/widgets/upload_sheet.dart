@@ -1,12 +1,26 @@
+import 'dart:typed_data';
+
+import 'package:file_selector/file_selector.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 
 import 'package:tanod_incentives/theme.dart';
 
+/// What the person picked in the upload sheet.
+class UploadedFile {
+  final String via; // 'photo' or 'file'
+  final Uint8List bytes;
+  final String name;
+  final bool isPdf;
+  const UploadedFile({required this.via, required this.bytes, required this.name, required this.isPdf});
+}
+
 // Bottom sheet for uploading the signed paper copy of a document.
-// GUI only: the camera and file picker are simulated.
-// Returns 'photo' or 'file', or null if cancelled.
-Future<String?> showUploadSheet(BuildContext context, {required String docTitle, bool correction = false}) {
-  return showModalBottomSheet<String>(
+// "Take a photo" opens the camera (phones only); "Choose a file" picks a
+// PDF or picture from the phone or computer. Returns null if cancelled.
+Future<UploadedFile?> showUploadSheet(BuildContext context, {required String docTitle, bool correction = false}) {
+  return showModalBottomSheet<UploadedFile>(
     context: context,
     backgroundColor: Colors.white,
     isScrollControlled: true,
@@ -14,6 +28,10 @@ Future<String?> showUploadSheet(BuildContext context, {required String docTitle,
     builder: (ctx) => _UploadSheet(docTitle: docTitle, correction: correction),
   );
 }
+
+// The camera only works on phones; desktops choose a file instead.
+bool get _hasCamera =>
+    !kIsWeb && (defaultTargetPlatform == TargetPlatform.android || defaultTargetPlatform == TargetPlatform.iOS);
 
 class _UploadSheet extends StatefulWidget {
   final String docTitle;
@@ -25,13 +43,52 @@ class _UploadSheet extends StatefulWidget {
 }
 
 class _UploadSheetState extends State<_UploadSheet> {
-  String? busy; // 'photo' or 'file' while "uploading"
+  String? busy; // 'photo' or 'file' while reading the picked file
 
-  void _pick(String via) {
+  Future<void> _pick(String via) async {
     setState(() => busy = via);
-    Future.delayed(const Duration(milliseconds: 1300), () {
-      if (mounted) Navigator.pop(context, via);
-    });
+    try {
+      final picked = via == 'photo' ? await _takePhoto() : await _chooseFile();
+      if (!mounted) return;
+      if (picked == null) {
+        setState(() => busy = null); // cancelled: stay on the sheet
+        return;
+      }
+      Navigator.pop(context, picked);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => busy = null);
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(tr('Couldn’t open that: $e', 'Hindi mabuksan: $e', 'Indi mabuksan: $e')),
+        behavior: SnackBarBehavior.floating,
+      ));
+    }
+  }
+
+  Future<UploadedFile?> _takePhoto() async {
+    final x = await ImagePicker().pickImage(
+      source: ImageSource.camera,
+      maxWidth: 2200, // sharp enough to read, small enough to store
+      imageQuality: 85,
+    );
+    if (x == null) return null;
+    return UploadedFile(via: 'photo', bytes: await x.readAsBytes(), name: x.name, isPdf: false);
+  }
+
+  Future<UploadedFile?> _chooseFile() async {
+    const types = XTypeGroup(
+      label: 'PDF or picture',
+      extensions: ['pdf', 'jpg', 'jpeg', 'png'],
+      mimeTypes: ['application/pdf', 'image/jpeg', 'image/png'], // needed on Android
+    );
+    final f = await openFile(acceptedTypeGroups: const [types]);
+    if (f == null) return null;
+    return UploadedFile(
+      via: 'file',
+      bytes: await f.readAsBytes(),
+      name: f.name,
+      isPdf: f.name.toLowerCase().endsWith('.pdf'),
+    );
   }
 
   Widget _option(String via, IconData icon, String title, String sub) {
@@ -91,12 +148,12 @@ class _UploadSheetState extends State<_UploadSheet> {
           Text(title, style: serif(23)),
           const SizedBox(height: 6),
           Text(
-            tr('Take a clear photo of every page of the signed paper, or choose a scan. It replaces the file in Gawad '
-                    'and becomes the backup copy your municipality and OPPDC can open.',
-                'Kunan ng malinaw na litrato ang bawat pahina ng pirmadong papel, o pumili ng scan. Papalitan nito ang file '
+            tr('Take a clear photo of the signed paper, or choose a PDF or picture. It replaces the old copy in Gawad '
+                    'and becomes the backup your municipality and OPPDC can open.',
+                'Kunan ng malinaw na litrato ang pirmadong papel, o pumili ng PDF o larawan. Papalitan nito ang lumang kopya '
                     'sa Gawad at magiging backup na mabubuksan ng munisipyo at OPPDC.',
-                'Kuhai sang maathag nga litrato ang kada pahina sang may pirma nga papel, ukon pilia ang scan. Ilisan sini '
-                    'ang file sa Gawad kag mangin backup nga mabuksan sang munisipyo kag OPPDC.'),
+                'Palihog kuhai sang maathag nga litrato ang may pirma nga papel, ukon magpili sang PDF ukon litrato. Ilisan sini '
+                    'ang daan nga kopya sa Gawad kag mangin backup nga mabuksan sang munisipyo kag OPPDC.'),
             style: sans(15, color: C.muted, h: 1.5),
           ),
           const SizedBox(height: 18),
@@ -104,45 +161,38 @@ class _UploadSheetState extends State<_UploadSheet> {
             Container(
               padding: const EdgeInsets.all(18),
               decoration: BoxDecoration(color: C.mist, borderRadius: BorderRadius.circular(16)),
-              child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-                Row(children: [
-                  const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2.5, color: C.blue)),
-                  const SizedBox(width: 12),
-                  Text(tr('Uploading…', 'Nag-a-upload…', 'Ginaupload…'), style: sans(16, w: FontWeight.w700, color: C.navy)),
-                ]),
-                const SizedBox(height: 12),
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(99),
-                  child: const LinearProgressIndicator(
-                    minHeight: 6,
-                    backgroundColor: Color(0xFFE3EAF2),
-                    valueColor: AlwaysStoppedAnimation(C.blue),
+              child: Row(children: [
+                const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2.5, color: C.blue)),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    busy == 'photo'
+                        ? tr('Waiting for the camera…', 'Hinihintay ang camera…', 'Ginahulat ang camera…')
+                        : tr('Waiting for you to pick a file…', 'Hinihintay ang pipiliing file…', 'Ginahulat ang pilion nga file…'),
+                    style: sans(16, w: FontWeight.w700, color: C.navy),
                   ),
-                ),
-                const SizedBox(height: 10),
-                Text(
-                  tr('No internet? It’s saved on the phone and uploads later.',
-                      'Walang internet? Naka-save ito sa phone at mag-a-upload mamaya.',
-                      'Wala internet? Naka-save ini sa phone kag ma-upload ini sa ulihi.'),
-                  style: sans(13.5, color: C.muted),
                 ),
               ]),
             ),
           ] else ...[
-            _option(
-              'photo',
-              Icons.photo_camera_outlined,
-              tr('Take a photo', 'Kumuha ng litrato', 'Magkuha sang litrato'),
-              tr('Use the phone camera. Lay the paper flat in good light.',
-                  'Gamitin ang camera ng phone. Ilapag ang papel sa maliwanag na lugar.',
-                  'Gamita ang camera sang phone. Ibutang ang papel sa masanag nga lugar.'),
-            ),
-            const SizedBox(height: 10),
+            if (_hasCamera) ...[
+              _option(
+                'photo',
+                Icons.photo_camera_outlined,
+                tr('Take a photo', 'Kumuha ng litrato', 'Magkuha sang litrato'),
+                tr('Use the phone camera. Lay the paper flat in good light.',
+                    'Gamitin ang camera ng phone. Ilapag ang papel sa maliwanag na lugar.',
+                    'Gamita ang camera sang phone. Ibutang ang papel sa masanag nga lugar.'),
+              ),
+              const SizedBox(height: 10),
+            ],
             _option(
               'file',
               Icons.upload_file_outlined,
               tr('Choose a file', 'Pumili ng file', 'Magpili sang file'),
-              tr('A PDF or picture from a scanner.', 'PDF o larawan mula sa scanner.', 'PDF ukon litrato halin sa scanner.'),
+              tr('A PDF or picture (JPG, PNG) from this phone or computer.',
+                  'PDF o larawan (JPG, PNG) mula sa phone o computer na ito.',
+                  'PDF ukon litrato (JPG, PNG) halin sa sini nga phone ukon computer.'),
             ),
             const SizedBox(height: 8),
             TextButton(

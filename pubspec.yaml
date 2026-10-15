@@ -11,18 +11,23 @@ dependencies:
   flutter:
     sdk: flutter
 
-  # Scanners & Camera dependencies
+  # PDF generation & preview
+  pdf: ^3.11.1
+  printing: ^5.13.2
+
+  # Scanners & camera
   mobile_scanner: ^5.2.3
-  google_mlkit_text_recognition: ^0.17.1
-  image_picker: ^1.2.4
+  google_mlkit_text_recognition: ^0.13.0
+  image_picker: ^1.1.2
+  image: ^4.2.0                  # straightening the ID card photo
+  google_generative_ai: ^0.4.6   # Gemini reading in the OCR scanner
 
-  # UI Icons
+  # Uploading signed copies
+  file_selector: ^1.1.0
+
+  # UI icons
   cupertino_icons: ^1.0.8
-  pdf: ^3.13.1
-  printing: ^5.15.1
-  google_generative_ai: ^0.4.7
-  image: ^4.12.0
-
+  
 dev_dependencies:
   flutter_test:
     sdk: flutter
@@ -30,3 +35,6 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+  assets:
+    - assets/iloilo.jpg
+    - assets/logo.png

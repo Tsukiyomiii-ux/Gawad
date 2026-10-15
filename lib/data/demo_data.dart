@@ -1,6 +1,8 @@
 import 'dart:typed_data';
 
-// Demo data for the barangay dashboard. Replace with real records later.
+// Account settings for the barangay dashboard (demo values until accounts
+// come from a server). The tanod list itself starts empty and is filled
+// only from scanned or typed IDs.
 
 // Shows the status switcher in the top bar for presenting. Set to false
 // once statuses come from the municipality and OPPDC through the backend.
@@ -11,7 +13,7 @@ const kRepFirstName = 'Melanie';
 const kRepPosition = 'Treasurer';
 const kCaptain = 'Hon. Roberto S. Abellar'; // Punong Barangay (signatory for this year)
 const kBarangay = 'Abat';
-const kMunicipality = 'Mina';
+const kMunicipality = 'Municipality';
 const kYear = 2026;
 const kQuota = 20; // allowed number of tanods, set by OPPDC
 const kAmountEach = 1000; // pesos per tanod (Ordinance 2020-240, Sec. 7(C))
@@ -56,24 +58,3 @@ class Tanod {
   // Used to spot names that may belong to the same person.
   String get nameKey => '${first.trim().toLowerCase()} ${last.trim().toLowerCase()}';
 }
-
-List<Tanod> demoTanods() => [
-      Tanod('Rodel', 'A', 'Gonzaga', 'PhilSys National ID'),
-      Tanod('Ernesto', 'B', 'Villanueva', "Voter's ID"),
-      Tanod('Mario', 'C', 'Peñaflor', 'Barangay ID', confirmed: false),
-      Tanod('Jonathan', 'D', 'Tupas', 'PhilSys National ID'),
-      Tanod('Arnel', 'S', 'Caballero', "Driver's License"),
-      Tanod('Romeo', 'L', 'Sorongon', 'PhilSys National ID'),
-      Tanod('Danilo', 'M', 'Belleza', 'Postal ID'),
-      Tanod('Rogelio', 'P', 'Jaleco', "Voter's ID"),
-      Tanod('Felix', 'T', 'Gallego', 'Senior Citizen ID'),
-      Tanod('Noel', 'R', 'Tolentino', 'PhilSys National ID'),
-      Tanod('Ricardo', 'V', 'Panes', 'Barangay ID'),
-      Tanod('Edgar', 'G', 'Lamasan', "Voter's ID"),
-      Tanod('Jessie', 'N', 'Alcantara', 'PhilSys National ID'),
-      Tanod('Leonardo', 'E', 'Hechanova', "Driver's License"),
-      Tanod('Wilfredo', 'O', 'Dioso', 'PhilSys National ID'),
-      Tanod('Alfredo', 'J', 'Moreno', 'Barangay ID'),
-      Tanod('Ramil', 'K', 'Segovia', "Voter's ID"),
-      Tanod('Rodel', '', 'Gonzaga', 'Barangay ID'),
-    ];

@@ -26,7 +26,13 @@ Future<Uint8List> buildOfficialPdf(BrgyRecord rec, DocKind kind) {
       ),
     DocKind.masterlist => generateMasterlistPdf(tanodList: people, calendarYear: '$kYear'),
     // Punong Barangay = "Certified correct" field in Documents → Edit
-    DocKind.certification => generateCertificationPdf(tanodList: people, punongBarangay: rec.captain),
+    // One certificate per barangay the tanods live in (from their IDs).
+    // Only this account's own certificate gets its Punong Barangay's name.
+    DocKind.certification => generateCertificationPdf(
+        tanodList: people,
+        punongBarangay: rec.captain,
+        signingBarangay: rec.name,
+      ),
     DocKind.idSheet => IdPhotocopy.buildAll(tanodList: people),
   };
 }
@@ -39,7 +45,7 @@ Future<void> showOfficialPdf(BuildContext context, BrgyRecord rec, DocKind kind)
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
       ..showSnackBar(SnackBar(
-        content: Text(tr('Add at least one tanod first.', 'Magdagdag muna ng kahit isang tanod.')),
+        content: Text(tr('Add at least one tanod first.', 'Magdagdag muna ng kahit isang tanod.', 'Palihog magdugang anay sang bisan isa ka tanod.')),
         behavior: SnackBarBehavior.floating,
       ));
     return Future.value();

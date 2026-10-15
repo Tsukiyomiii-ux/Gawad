@@ -7,7 +7,11 @@ import 'package:flutter/material.dart';
 import 'package:tanod_incentives/theme.dart';
 import 'package:tanod_incentives/screens/auth/auth_page.dart';
 
-void main() => runApp(const GawadApp());
+void main() {
+  // TEMP: print the full details of every layout error (remove before the demo)
+  FlutterError.onError = (details) => FlutterError.dumpErrorToConsole(details, forceReport: true);
+  runApp(const GawadApp());
+}
 
 class GawadApp extends StatelessWidget {
   const GawadApp({super.key});

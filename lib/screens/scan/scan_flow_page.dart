@@ -30,29 +30,17 @@ enum _Step { privacy, capture, reading, confirm }
 
 const kScannableId = 'PhilSys National ID';
 
-class _Sample {
-  final String first, middleName, last;
-  final Set<String> hardToRead; // fields the reader was unsure about
-  const _Sample(this.first, this.middleName, this.last, this.hardToRead);
-  String get middleInitial => middleName.isEmpty ? '' : middleName[0];
-}
 
-// MERGE: only used as the faded illustration in the viewfinder now.
-const _samples = [
-  _Sample('Juan', 'Santos', 'Dela Cruz', {}),
-];
 
 class _ScanFlowPageState extends State<ScanFlowPage> with SingleTickerProviderStateMixin {
   late _Step step = ScanFlowPage.privacyAccepted ? _Step.capture : _Step.privacy;
   final List<Tanod> saved = [];
-  static const int _sampleIndex = 0;
 
   bool privacyTicked = false;
   bool checked = false; // "I checked this against the original ID"
   bool manual = false; // typed by hand, no photo
   String manualType = kIdTypes.firstWhere((t) => t != kScannableId); // for typed entries
   String get idType => manual ? manualType : kScannableId;
-  _Sample? sample;
 
   // MERGE: the real scan result (null when typed by hand)
   TanodPerson? scanned;
@@ -111,7 +99,6 @@ class _ScanFlowPageState extends State<ScanFlowPage> with SingleTickerProviderSt
     setState(() {
       scanned = person;
       scanSource = person.scannedByOcr ? 'photo scan (offline)' : 'QR code';
-      sample = null;
       _first.text = t.first;
       _middle.text = t.middle;
       _last.text = t.last;
@@ -126,7 +113,6 @@ class _ScanFlowPageState extends State<ScanFlowPage> with SingleTickerProviderSt
 
   void _typeInstead() => setState(() {
         manual = true;
-        sample = null;
         scanned = null;
         _first.clear();
         _middle.clear();
@@ -450,7 +436,7 @@ class _ScanFlowPageState extends State<ScanFlowPage> with SingleTickerProviderSt
           constraints: const BoxConstraints(maxWidth: 640),
           child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
             _viewfinder(
-              child: Opacity(opacity: .35, child: _MockIdCard(sample: _samples[_sampleIndex % _samples.length])),
+              child: Opacity(opacity: .35, child: const _MockIdCard()),
             ),
             const SizedBox(height: 14),
             Wrap(alignment: WrapAlignment.center, spacing: 18, runSpacing: 8, children: [
@@ -492,7 +478,7 @@ class _ScanFlowPageState extends State<ScanFlowPage> with SingleTickerProviderSt
         child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
           _viewfinder(
             child: Stack(children: [
-              _MockIdCard(sample: _samples[_sampleIndex % _samples.length]),
+              const _MockIdCard(),
               Positioned.fill(
                 child: AnimatedBuilder(
                   animation: _scanLine,
@@ -526,28 +512,10 @@ class _ScanFlowPageState extends State<ScanFlowPage> with SingleTickerProviderSt
 
   // ---------------- 4. Confirm ----------------
   Widget _confirm() {
-    final low = sample?.hardToRead ?? const <String>{};
     final noMoreSlots = slotsLeft <= 1;
 
-    Widget field(String key, Widget input) => Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-          input,
-          if (low.contains(key))
-            Padding(
-              padding: const EdgeInsets.only(top: 6),
-              child: Row(children: [
-                const Icon(Icons.error_outline, size: 15, color: Color(0xFF7A5B00)),
-                const SizedBox(width: 6),
-                Expanded(
-                  child: Text(
-                    key == 'middle'
-                        ? 'Hard to read. Type the middle initial if there is one.'
-                        : 'Hard to read. Check letters like ñ against the ID.',
-                    style: sans(13.5, w: FontWeight.w600, color: const Color(0xFF7A5B00)),
-                  ),
-                ),
-              ]),
-            ),
-        ]);
+    Widget field(String key, Widget input) => input;
+
 
     final photo = Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
       Container(
@@ -764,14 +732,13 @@ String _title(String s) => s
 // ---------------- Mock ID card ----------------
 // A generic card drawn in Flutter, standing in for the camera photo.
 class _MockIdCard extends StatelessWidget {
-  final _Sample sample;
-  final Set<String> highlight;
-  const _MockIdCard({required this.sample, this.highlight = const {}});
+  // MERGE: fixed placeholder card shown in the viewfinder (the real reading is
+  // done by the QR / OCR scanners).
+  const _MockIdCard();
 
   @override
   Widget build(BuildContext context) {
     Widget value(String key, String label, String text) {
-      final hl = highlight.contains(key);
       return Padding(
         padding: const EdgeInsets.only(bottom: 6),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -780,8 +747,6 @@ class _MockIdCard extends StatelessWidget {
             margin: const EdgeInsets.only(top: 1),
             padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 1),
             decoration: BoxDecoration(
-              color: hl ? C.yellow.withValues(alpha: .35) : null,
-              border: hl ? Border.all(color: C.yellowDark, width: 1.5) : null,
               borderRadius: BorderRadius.circular(3),
             ),
             child: Text(text.isEmpty ? '▒▒▒▒▒▒' : text.toUpperCase(),
@@ -834,9 +799,9 @@ class _MockIdCard extends StatelessWidget {
                     const SizedBox(width: 12),
                     Expanded(
                       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                        value('last', 'APELYIDO / LAST NAME', sample.last),
-                        value('first', 'MGA PANGALAN / GIVEN NAMES', sample.first),
-                        value('middle', 'GITNANG APELYIDO / MIDDLE NAME', sample.middleName),
+                        value('last', 'APELYIDO / LAST NAME', 'Dela Cruz'),
+                        value('first', 'MGA PANGALAN / GIVEN NAMES', 'Juan'),
+                        value('middle', 'GITNANG APELYIDO / MIDDLE NAME', 'Santos'),
                       ]),
                     ),
                   ]),

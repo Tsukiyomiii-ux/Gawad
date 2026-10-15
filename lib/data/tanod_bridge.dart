@@ -3,6 +3,7 @@
 // so every PDF is built from this conversion.
 
 import 'package:tanod_incentives/Templates/payroll_template.dart';
+import 'package:tanod_incentives/Scanner/ocr_files/id_parser.dart' show IdSanitizer;
 import 'package:tanod_incentives/data/demo_data.dart';
 import 'package:tanod_incentives/data/store.dart';
 
@@ -21,11 +22,15 @@ Tanod tanodFromPerson(TanodPerson p, {String idType = 'PhilSys National ID'}) {
   );
 }
 
-/// Gawad tanod → TanodPerson for the PDF templates. The barangay and
-/// municipality always come from the barangay's account, not from the ID.
+/// Gawad tanod → TanodPerson for the PDF templates.
+/// - barangay / municipality: the account's (who files and certifies the documents)
+/// - homeBarangay / homeMunicipality / rawAddress: from the ID's address, for
+///   the ADDRESS columns. Typed entries without an address use the account's.
 TanodPerson personFromTanod(Tanod t, BrgyRecord rec) {
   final brgy = rec.name.toUpperCase();
   final muni = kMunicipality.toUpperCase();
+  final address = t.scannedAddress.trim().toUpperCase();
+  final home = IdSanitizer.splitAddress(address);
   return TanodPerson(
     pcn: 'N/A', // not kept (see the privacy notice on the scan screen)
     firstName: t.first,
@@ -35,9 +40,11 @@ TanodPerson personFromTanod(Tanod t, BrgyRecord rec) {
     sex: 'N/A',
     dob: 'N/A',
     pob: 'N/A',
-    rawAddress: '$brgy, $muni',
+    rawAddress: home.barangay.isNotEmpty || home.municipality.isNotEmpty ? address : '$brgy, $muni',
     barangay: brgy,
     municipality: muni,
+    homeBarangay: home.barangay,
+    homeMunicipality: home.municipality,
     idFront: t.idFront,
     idBack: t.idBack,
   );

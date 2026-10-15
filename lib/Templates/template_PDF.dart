@@ -82,7 +82,6 @@ class _TemplatePdfScreenState extends State<TemplatePdfScreen> {
         build: (format) {
           switch (_selectedTemplate) {
             case DocumentTemplate.payroll:
-              return generatePayrollPdf(tanodList: widget.scannedTanods);
             case DocumentTemplate.masterlist:
               return generateMasterlistPdf(tanodList: widget.scannedTanods);
             case DocumentTemplate.certification:

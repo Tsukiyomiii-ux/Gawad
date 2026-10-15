@@ -5,7 +5,7 @@ import 'package:tanod_incentives/data/doc_kind.dart';
 import 'package:tanod_incentives/data/store.dart';
 import 'package:tanod_incentives/widgets/ui.dart';
 import 'package:tanod_incentives/widgets/chat_thread.dart';
-import 'package:tanod_incentives/screens/dashboard/documents_view.dart' show showBackupCopy, signedFileName;
+import 'package:tanod_incentives/screens/dashboard/documents_view.dart' show showBackupCopy, shareSignedCopy;
 
 // The municipal reviewer checks one barangay's PAPER set.
 // Mistakes are sent to the barangay as messages, tagged to a document. The
@@ -551,8 +551,7 @@ class _CheckPageState extends State<CheckPage> {
                           style: OutlinedButton.styleFrom(minimumSize: const Size(0, 46)),
                           onPressed: () {
                             Navigator.pop(ctx);
-                            toast(context, tr('Saved “${signedFileName(b, k)}” (demo).', 'Na-save ang “${signedFileName(b, k)}” (demo).',
-                                'Na-save ang “${signedFileName(b, k)}” (demo).'));
+                            shareSignedCopy(context, b, k); // the real uploaded copy
                           },
                           icon: const Icon(Icons.download_rounded, size: 18),
                           label: Text(tr('Download', 'I-download', 'I-download')),

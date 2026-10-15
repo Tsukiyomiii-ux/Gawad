@@ -6,6 +6,9 @@ import 'package:tanod_incentives/data/doc_kind.dart';
 import 'package:tanod_incentives/data/store.dart';
 import 'package:tanod_incentives/widgets/app_field.dart';
 import 'package:tanod_incentives/Templates/gawad_pdf.dart'; // MERGE: real PDFs
+import 'package:pdf/pdf.dart';
+import 'package:pdf/widgets.dart' as pw;
+import 'package:printing/printing.dart';
 
 export 'package:tanod_incentives/data/doc_kind.dart';
 
@@ -77,7 +80,66 @@ Widget documentDesk(Widget paper, {bool scroll = true, bool photo = false}) {
 
 String signedFileName(BrgyRecord rec, DocKind k) {
   final f = rec.files[k]!;
-  return '${k.title} - Brgy ${rec.name} - $kYear - signed v${f.version}.${f.via == 'photo' ? 'jpg' : 'pdf'}';
+  return '${k.title} - Brgy ${rec.name} - $kYear - signed v${f.version}.${f.bytes != null && !f.isPdf ? 'jpg' : 'pdf'}';
+}
+
+/// The uploaded signed copy itself (photo or chosen file), or null when there
+/// is only demo data. Used by the backup viewer and the card thumbnails.
+Widget? uploadedCopyView(DocFile f, {bool thumbnail = false}) {
+  final bytes = f.bytes;
+  if (bytes == null) return null;
+  if (!f.isPdf) {
+    return thumbnail
+        ? Image.memory(bytes, fit: BoxFit.cover, width: 720)
+        : InteractiveViewer(maxScale: 5, child: Center(child: Image.memory(bytes)));
+  }
+  if (thumbnail) {
+    return Container(
+      width: 720,
+      height: 480,
+      color: Colors.white,
+      alignment: Alignment.center,
+      child: Column(mainAxisSize: MainAxisSize.min, children: [
+        const Icon(Icons.picture_as_pdf_rounded, size: 140, color: C.red),
+        const SizedBox(height: 12),
+        Text(f.fileName ?? 'PDF', style: sans(34, w: FontWeight.w700, color: C.navy)),
+      ]),
+    );
+  }
+  return PdfPreview(
+    build: (_) => bytes,
+    useActions: false,
+    canChangePageFormat: false,
+    canChangeOrientation: false,
+    canDebug: false,
+  );
+}
+
+/// Download / share the uploaded signed copy. Pictures are wrapped in a
+/// one-page PDF so they can be saved and printed the same way.
+Future<void> shareSignedCopy(BuildContext context, BrgyRecord rec, DocKind k) async {
+  final f = rec.files[k]!;
+  final bytes = f.bytes;
+  if (bytes == null) {
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(tr('This is demo data. Upload a real copy first.', 'Demo data ito. Mag-upload muna ng totoong kopya.',
+          'Demo data ini. Palihog mag-upload anay sang matuod nga kopya.')),
+      behavior: SnackBarBehavior.floating,
+    ));
+    return;
+  }
+  var pdfBytes = bytes;
+  if (!f.isPdf) {
+    final doc = pw.Document();
+    doc.addPage(pw.Page(
+      pageFormat: PdfPageFormat.a4,
+      margin: const pw.EdgeInsets.all(20),
+      build: (_) => pw.Center(child: pw.Image(pw.MemoryImage(bytes), fit: pw.BoxFit.contain)),
+    ));
+    pdfBytes = await doc.save();
+  }
+  final name = signedFileName(rec, k).replaceAll(RegExp(r'\.jpg$'), '.pdf');
+  await Printing.sharePdf(bytes: pdfBytes, filename: name);
 }
 
 // Opens a document's backup copy (the uploaded signed paper). When nothing is
@@ -151,7 +213,11 @@ Future<void> showBackupCopy(
               ]),
             ),
             const Divider(height: 1, color: C.line),
-            Flexible(child: documentDesk(paperFor(rec, kind, signed: f.uploaded), photo: f.uploaded)),
+            Flexible(
+              child: f.bytes != null
+                  ? SizedBox(height: size.height * .62, child: uploadedCopyView(f)!) // the real upload
+                  : documentDesk(paperFor(rec, kind, signed: f.uploaded), photo: f.uploaded),
+            ),
             if (buttons.isNotEmpty) ...[
               const Divider(height: 1, color: C.line),
               Padding(
@@ -211,7 +277,7 @@ class _DocumentsViewState extends State<DocumentsView> {
       '${k.title} - ${filled ? 'Brgy ${rec.name}' : 'Blank template'} - $kYear.pdf';
 
   void _saved(String name) => widget.onToast(tr('Saved “$name” (demo: real files come with the backend).',
-      'Na-save ang “$name” (demo: darating ang totoong file kasama ng backend).'));
+      'Na-save ang “$name” (demo: darating ang totoong file kasama ng backend).', 'Na-save ang “$name” (demo: maabot ang matuod nga file upod sang backend).'));
 
   DocumentPaper _paper(DocKind k, bool filled) => DocumentPaper(
         kind: k,
@@ -242,13 +308,13 @@ class _DocumentsViewState extends State<DocumentsView> {
           child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 8),
-              child: Text(tr('Download ${k.title}', 'I-download ang ${k.title}'), style: serif(22)),
+              child: Text(tr('Download ${k.title}', 'I-download ang ${k.title}', 'I-download ang ${k.title}'), style: serif(22)),
             ),
             const SizedBox(height: 10),
             ListTile(
               leading: const Icon(Icons.picture_as_pdf_outlined, color: C.blue),
-              title: Text(tr('Ready-to-print PDF', 'PDF na handang i-print'), style: sans(16, w: FontWeight.w600)),
-              subtitle: Text(tr('No signatures. Print this for signing.', 'Walang pirma. Ito ang ipi-print para pirmahan.'),
+              title: Text(tr('Ready-to-print PDF', 'PDF na handang i-print', 'PDF nga handa na i-print'), style: sans(16, w: FontWeight.w600)),
+              subtitle: Text(tr('No signatures. Print this for signing.', 'Walang pirma. Ito ang ipi-print para pirmahan.', 'Wala sang pirma. Amo ini ang i-print para pirmahan.'),
                   style: sans(14, color: C.muted)),
               onTap: () {
                 Navigator.pop(ctx);
@@ -257,12 +323,12 @@ class _DocumentsViewState extends State<DocumentsView> {
             ),
             ListTile(
               leading: const Icon(Icons.photo_camera_back_outlined, color: C.green),
-              title: Text(tr('Signed copy (backup)', 'Pirmadong kopya (backup)'), style: sans(16, w: FontWeight.w600)),
-              subtitle: Text(tr('The photo or scan you uploaded on ${f.uploadedOn}.', 'Ang litrato o scan na na-upload noong ${f.uploadedOn}.'),
+              title: Text(tr('Signed copy (backup)', 'Pirmadong kopya (backup)', 'May pirma nga kopya (backup)'), style: sans(16, w: FontWeight.w600)),
+              subtitle: Text(tr('The photo or scan you uploaded on ${f.uploadedOn}.', 'Ang litrato o scan na na-upload noong ${f.uploadedOn}.', 'Ang litrato ukon scan nga gin-upload ninyo sang ${f.uploadedOn}.'),
                   style: sans(14, color: C.muted)),
               onTap: () {
                 Navigator.pop(ctx);
-                _saved(signedFileName(rec, k));
+                shareSignedCopy(context, rec, k);
               },
             ),
           ]),
@@ -282,10 +348,10 @@ class _DocumentsViewState extends State<DocumentsView> {
           style: OutlinedButton.styleFrom(minimumSize: const Size(0, 46)),
           onPressed: () {
             Navigator.pop(ctx);
-            _saved(signedFileName(rec, k));
+            shareSignedCopy(context, rec, k);
           },
           icon: const Icon(Icons.download_rounded, size: 18),
-          label: Text(tr('Download', 'I-download')),
+          label: Text(tr('Download', 'I-download', 'I-download')),
         ),
         if (!widget.locked || f.correction)
           FilledButton.icon(
@@ -296,8 +362,8 @@ class _DocumentsViewState extends State<DocumentsView> {
             },
             icon: const Icon(Icons.upload_rounded, size: 18),
             label: Text(f.correction
-                ? tr('Upload corrected copy', 'I-upload ang naitamang kopya')
-                : tr('Replace with a new photo', 'Palitan ng bagong litrato')),
+                ? tr('Upload corrected copy', 'I-upload ang naitamang kopya', 'I-upload ang natadlong nga kopya')
+                : tr('Replace with a new photo', 'Palitan ng bagong litrato', 'Ilisan sang bag-o nga litrato')),
           ),
       ],
     );
@@ -308,7 +374,7 @@ class _DocumentsViewState extends State<DocumentsView> {
     showDialog(
       context: context,
       builder: (ctx) => _shell(ctx, 860, [
-        _dialogHeader(ctx, k, k.title, tr('Blank template · tanod rows left empty', 'Blangkong template · walang laman ang hanay ng tanod'), false),
+        _dialogHeader(ctx, k, k.title, tr('Blank template · tanod rows left empty', 'Blangkong template · walang laman ang hanay ng tanod', 'Blangko nga template · wala sulod ang mga linya sang tanod'), false),
         const Divider(height: 1, color: C.line),
         Flexible(child: documentDesk(_paper(k, false))),
       ]),
@@ -327,12 +393,12 @@ class _DocumentsViewState extends State<DocumentsView> {
             ]),
           ),
           IconButton(
-            tooltip: tr('Download', 'I-download'),
+            tooltip: tr('Download', 'I-download', 'I-download'),
             onPressed: () => filled ? showOfficialPdf(context, rec, k) : _saved(_pdfName(k, filled)),
             icon: const Icon(Icons.download_rounded, color: C.navy),
           ),
           IconButton(
-            tooltip: tr('Close', 'Isara'),
+            tooltip: tr('Close', 'Isara', 'Sirhan'),
             onPressed: () => Navigator.pop(ctx),
             icon: const Icon(Icons.close_rounded, color: C.muted),
           ),
@@ -360,7 +426,7 @@ class _DocumentsViewState extends State<DocumentsView> {
       showDialog(
         context: context,
         builder: (ctx) => _shell(ctx, 860, [
-          _dialogHeader(ctx, k, k.title, tr('Your set is being checked, so editing is locked.', 'Sinusuri ang inyong set kaya naka-lock ang pag-edit.'), true),
+          _dialogHeader(ctx, k, k.title, tr('Your set is being checked, so editing is locked.', 'Sinusuri ang inyong set kaya naka-lock ang pag-edit.', 'Ginausisa pa ang inyo set, gani naka-lock anay ang pag-edit.'), true),
           const Divider(height: 1, color: C.line),
           Flexible(child: documentDesk(_paper(k, true))),
         ]),
@@ -379,8 +445,8 @@ class _DocumentsViewState extends State<DocumentsView> {
         final wide = MediaQuery.of(ctx).size.width >= 900;
         final editor = _editorPanel(ctx, changed);
         return _shell(ctx, 1200, [
-          _dialogHeader(ctx, k, tr('Edit ${k.title}', 'Baguhin ang ${k.title}'),
-              tr('Changes update all four documents', 'Maa-update ang apat na dokumento'), true),
+          _dialogHeader(ctx, k, tr('Edit ${k.title}', 'Baguhin ang ${k.title}', 'I-edit ang ${k.title}'),
+              tr('Changes update all four documents', 'Maa-update ang apat na dokumento', 'Ma-update ang apat ka dokumento'), true),
           const Divider(height: 1, color: C.line),
           Flexible(
             child: wide
@@ -420,7 +486,7 @@ class _DocumentsViewState extends State<DocumentsView> {
             rec.captain = _cert.text;
             changed();
           },
-          decoration: fieldDecoration(tr('Full name', 'Buong pangalan'), Icons.draw_outlined),
+          decoration: fieldDecoration(tr('Full name', 'Buong pangalan', 'Bilog nga ngalan'), Icons.draw_outlined),
         ),
       ]);
 
@@ -436,7 +502,7 @@ class _DocumentsViewState extends State<DocumentsView> {
           Expanded(
             child: Text(
                 tr('Edits here also change your Tanods list and all four documents. It’s the same list, so you only fix things once.',
-                    'Ang binago rito ay magbabago rin sa listahan ng Tanod at sa apat na dokumento. Iisang listahan ito, kaya isang beses lang mag-aayos.'),
+                    'Ang binago rito ay magbabago rin sa listahan ng Tanod at sa apat na dokumento. Iisang listahan ito, kaya isang beses lang mag-aayos.', 'Ang ginbag-o diri magabag-o man sa inyo listahan sang Tanod kag sa apat ka dokumento. Isa lang ini ka listahan, gani makaisa lang kamo magtadlong.'),
                 style: sans(14.5, color: const Color(0xFF1B3F68), h: 1.45)),
           ),
         ]),
@@ -452,22 +518,22 @@ class _DocumentsViewState extends State<DocumentsView> {
             Expanded(
               child: Text(
                   tr('Some documents already have signed copies. If you change anything, print the new version, have it signed, and upload it again.',
-                      'May pirmadong kopya na ang ilang dokumento. Kapag may binago, i-print ang bagong bersyon, papirmahan, at i-upload ulit.'),
+                      'May pirmadong kopya na ang ilang dokumento. Kapag may binago, i-print ang bagong bersyon, papirmahan, at i-upload ulit.', 'May pirma na nga kopya ang pila ka dokumento. Kon may bag-uhon kamo, palihog i-print ang bag-o nga bersyon, papirmahi, kag i-upload liwat.'),
                   style: sans(14.5, color: const Color(0xFF5C4400), h: 1.45)),
             ),
           ]),
         ),
       ],
       const SizedBox(height: 20),
-      _editorTitle(tr('Signatories · $kYear', 'Mga pipirma · $kYear')),
+      _editorTitle(tr('Signatories · $kYear', 'Mga pipirma · $kYear', 'Mga pipirma · $kYear')),
       const SizedBox(height: 10),
-      _signatoryField(tr('Prepared by (Barangay ${rec.position})', 'Inihanda ni (Barangay ${rec.position})'), _prep, changed),
+      _signatoryField(tr('Prepared by (Barangay ${rec.position})', 'Inihanda ni (Barangay ${rec.position})', 'Ginhanda ni (Barangay ${rec.position})'), _prep, changed),
       const SizedBox(height: 12),
-      _signatoryField(tr('Certified correct (Punong Barangay)', 'Pinatunayan ni (Punong Barangay)'), _cert, changed),
+      _signatoryField(tr('Certified correct (Punong Barangay)', 'Pinatunayan ni (Punong Barangay)', 'Ginpamatud-an ni (Punong Barangay)'), _cert, changed),
       const SizedBox(height: 22),
       Row(children: [
-        Expanded(child: _editorTitle(tr('Tanods (${tanods.length} of ${rec.quota})', 'Mga tanod (${tanods.length} sa ${rec.quota})'))),
-        Text(tr('Tap to edit', 'Pindutin para baguhin'), style: sans(13.5, color: C.muted)),
+        Expanded(child: _editorTitle(tr('Tanods (${tanods.length} of ${rec.quota})', 'Mga tanod (${tanods.length} sa ${rec.quota})', 'Mga tanod (${tanods.length} sa ${rec.quota})'))),
+        Text(tr('Tap to edit', 'Pindutin para baguhin', 'Pinduta para i-edit'), style: sans(13.5, color: C.muted)),
       ]),
       const SizedBox(height: 8),
       for (var i = 0; i < tanods.length; i++)
@@ -489,7 +555,7 @@ class _DocumentsViewState extends State<DocumentsView> {
                   Expanded(
                     child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                       Text(tanods[i].fullName, overflow: TextOverflow.ellipsis, style: sans(15, w: FontWeight.w600)),
-                      Text(tanods[i].confirmed ? tanods[i].idType : '${tanods[i].idType} · ${tr('check spelling', 'suriin ang baybay')}',
+                      Text(tanods[i].confirmed ? tanods[i].idType : '${tanods[i].idType} · ${tr('check spelling', 'suriin ang baybay', 'usisaa ang spelling')}',
                           overflow: TextOverflow.ellipsis,
                           style: sans(13.5, color: tanods[i].confirmed ? C.muted : const Color(0xFF7A5B00))),
                     ]),
@@ -530,20 +596,20 @@ class _DocumentsViewState extends State<DocumentsView> {
                     decoration: BoxDecoration(color: const Color(0xFFFFF8E1), borderRadius: BorderRadius.circular(10)),
                     child: Text(
                         tr('Compare with the original ID. Saving marks this name as checked.',
-                            'Ikumpara sa orihinal na ID. Kapag na-save, itatalang nasuri na ang pangalan.'),
+                            'Ikumpara sa orihinal na ID. Kapag na-save, itatalang nasuri na ang pangalan.', 'Ikumpara sa orihinal nga ID. Kon i-save, markahan ini nga ngalan nga nausisa na.'),
                         style: sans(14.5, color: const Color(0xFF5C4400), h: 1.4)),
                   ),
                   const SizedBox(height: 14),
                 ],
                 AppField(
-                  label: tr('First name', 'Pangalan'),
+                  label: tr('First name', 'Pangalan', 'Ngalan'),
                   icon: Icons.person_outline,
                   controller: first,
-                  validator: (v) => (v ?? '').trim().isEmpty ? tr('Enter the first name.', 'Ilagay ang pangalan.') : null,
+                  validator: (v) => (v ?? '').trim().isEmpty ? tr('Enter the first name.', 'Ilagay ang pangalan.', 'Isulat ang ngalan.') : null,
                 ),
                 const SizedBox(height: 12),
                 AppField(
-                  label: tr('Middle initial', 'Gitnang inisyal'),
+                  label: tr('Middle initial', 'Gitnang inisyal', 'Inisyal sang tunga nga ngalan'),
                   icon: Icons.short_text,
                   controller: middle,
                   maxLength: 1,
@@ -552,13 +618,13 @@ class _DocumentsViewState extends State<DocumentsView> {
                 ),
                 const SizedBox(height: 12),
                 AppField(
-                  label: tr('Last name', 'Apelyido'),
+                  label: tr('Last name', 'Apelyido', 'Apelyido'),
                   icon: Icons.person_outline,
                   controller: last,
-                  validator: (v) => (v ?? '').trim().isEmpty ? tr('Enter the last name.', 'Ilagay ang apelyido.') : null,
+                  validator: (v) => (v ?? '').trim().isEmpty ? tr('Enter the last name.', 'Ilagay ang apelyido.', 'Isulat ang apelyido.') : null,
                 ),
                 const SizedBox(height: 12),
-                FieldLabel(tr('ID type', 'Uri ng ID')),
+                FieldLabel(tr('ID type', 'Uri ng ID', 'Klase sang ID')),
                 DropdownButtonFormField<String>(
                   initialValue: idType,
                   isExpanded: true,
@@ -577,18 +643,18 @@ class _DocumentsViewState extends State<DocumentsView> {
           TextButton.icon(
             onPressed: () => Navigator.pop(dctx, 'remove'),
             icon: const Icon(Icons.delete_outline, size: 18, color: C.red),
-            label: Text(tr('Remove', 'Tanggalin'), style: sans(14.5, w: FontWeight.w600, color: C.red)),
+            label: Text(tr('Remove', 'Tanggalin', 'Kuhaon'), style: sans(14.5, w: FontWeight.w600, color: C.red)),
           ),
           TextButton(
             onPressed: () => Navigator.pop(dctx),
-            child: Text(tr('Cancel', 'Kanselahin'), style: sans(14.5, w: FontWeight.w600, color: C.muted)),
+            child: Text(tr('Cancel', 'Kanselahin', 'Kanselaha'), style: sans(14.5, w: FontWeight.w600, color: C.muted)),
           ),
           FilledButton(
             style: FilledButton.styleFrom(backgroundColor: C.navy, foregroundColor: Colors.white),
             onPressed: () {
               if (formKey.currentState!.validate()) Navigator.pop(dctx, 'save');
             },
-            child: Text(tr('Save', 'I-save')),
+            child: Text(tr('Save', 'I-save', 'I-save')),
           ),
         ],
       ),
@@ -606,7 +672,7 @@ class _DocumentsViewState extends State<DocumentsView> {
       final name = t.fullName;
       tanods.removeAt(i);
       changed();
-      widget.onToast(tr('Removed $name. Award numbers were renumbered.', 'Tinanggal si $name. Inayos ang mga award number.'));
+      widget.onToast(tr('Removed $name. Award numbers were renumbered.', 'Tinanggal si $name. Inayos ang mga award number.', 'Ginkuha na si $name. Na-ilis na ang mga award number.'));
     }
 
     Future.delayed(const Duration(milliseconds: 400), () {
@@ -632,7 +698,7 @@ class _DocumentsViewState extends State<DocumentsView> {
           const Color(0xFF1B3F68),
           Icons.description_outlined,
           tr('Empty forms to fill in by hand. The barangay and year are already printed; the tanod rows are blank.',
-              'Blangkong form na pupunan nang mano-mano. Nakalimbag na ang barangay at taon; blangko ang mga hanay ng tanod.'),
+              'Blangkong form na pupunan nang mano-mano. Nakalimbag na ang barangay at taon; blangko ang mga hanay ng tanod.', 'Blangko nga form nga pun-an sa kamot. Naka-imprinta na ang barangay kag tuig; blangko ang mga linya sang tanod.'),
         )
       else ...[
         _banner(
@@ -643,7 +709,7 @@ class _DocumentsViewState extends State<DocumentsView> {
           tr('Filled in with your ${tanods.length} tanods. Download and print each one for signing, then upload a photo or scan '
                   'of the signed paper. The upload replaces the file here and becomes your backup copy.',
               'May laman na ng inyong ${tanods.length} tanod. I-download at i-print ang bawat isa para pirmahan, saka i-upload ang '
-                  'litrato o scan ng pirmadong papel. Papalitan nito ang file dito at magiging backup ninyo.'),
+                  'litrato o scan ng pirmadong papel. Papalitan nito ang file dito at magiging backup ninyo.', 'Napun-an na sang inyo ${tanods.length} ka tanod. Palihog i-download kag i-print ang kada isa para pirmahan, dayon i-upload ang litrato ukon scan ' 'sang may pirma nga papel. Ilisan sang upload ang file diri kag mangin backup ninyo.'),
         ),
         if (fixes.isNotEmpty) ...[
           const SizedBox(height: 10),
@@ -655,10 +721,10 @@ class _DocumentsViewState extends State<DocumentsView> {
             tr('$kMunicipality asked for corrections on: ${fixes.map((f) => f.kind.title).join(', ')}. '
                     'Fix the paper copy, then upload the corrected copy so the backup matches.',
                 'Humiling ang $kMunicipality ng pagtatama sa: ${fixes.map((f) => f.kind.title).join(', ')}. '
-                    'Itama ang papel, saka i-upload ang naitamang kopya para tugma ang backup.'),
+                    'Itama ang papel, saka i-upload ang naitamang kopya para tugma ang backup.', 'Nagpangayo ang $kMunicipality sang pagtadlong sa: ${fixes.map((f) => f.kind.title).join(', ')}. ' 'Palihog tadlunga ang papel, dayon i-upload ang natadlong nga kopya para pareho ang backup.'),
             action: TextButton(
               onPressed: widget.onOpenMessages,
-              child: Text(tr('Open messages', 'Buksan ang mensahe'), style: sans(14.5, w: FontWeight.w700, color: C.red)),
+              child: Text(tr('Open messages', 'Buksan ang mensahe', 'Buksan ang mensahe'), style: sans(14.5, w: FontWeight.w700, color: C.red)),
             ),
           ),
         ],
@@ -670,7 +736,7 @@ class _DocumentsViewState extends State<DocumentsView> {
             const Color(0xFF5C4400),
             Icons.error_outline,
             tr('${widget.issueCount} thing${widget.issueCount == 1 ? '' : 's'} still to check. Rows in yellow need a second look before you print.',
-                '${widget.issueCount} pa ang susuriin. Tingnan muli ang mga hanay na dilaw bago mag-print.'),
+                '${widget.issueCount} pa ang susuriin. Tingnan muli ang mga hanay na dilaw bago mag-print.', '${widget.issueCount} pa ang usisaon. Palihog tan-awa liwat ang mga linya nga dalag antes mag-print.'),
           ),
         ],
       ],
@@ -717,10 +783,10 @@ class _DocumentsViewState extends State<DocumentsView> {
         border: Border.all(color: C.line),
       ),
       child: Row(children: [
-        tab(tr('Filled documents', 'May lamang dokumento'), Icons.assignment_turned_in_outlined, filledTab,
+        tab(tr('Filled documents', 'May lamang dokumento', 'Napun-an nga dokumento'), Icons.assignment_turned_in_outlined, filledTab,
             () => setState(() => filledTab = true)),
         const SizedBox(width: 6),
-        tab(tr('Blank templates', 'Blangkong template'), Icons.description_outlined, !filledTab,
+        tab(tr('Blank templates', 'Blangkong template', 'Blangko nga template'), Icons.description_outlined, !filledTab,
             () => setState(() => filledTab = false)),
       ]),
     );
@@ -823,7 +889,7 @@ class _DocumentsViewState extends State<DocumentsView> {
                   style: _outlined,
                   onPressed: () => _preview(k),
                   icon: const Icon(Icons.visibility_outlined, size: 18),
-                  label: Text(tr('Preview', 'Tingnan'), style: sans(15, w: FontWeight.w600, color: C.navy)),
+                  label: Text(tr('Preview', 'Tingnan', 'Tan-awa'), style: sans(15, w: FontWeight.w600, color: C.navy)),
                 ),
               ),
               const SizedBox(width: 8),
@@ -838,7 +904,7 @@ class _DocumentsViewState extends State<DocumentsView> {
                   ),
                   onPressed: () => _download(k, false),
                   icon: const Icon(Icons.download_rounded, size: 18),
-                  label: Text(tr('Download', 'I-download'), style: sans(15, w: FontWeight.w700, color: Colors.white)),
+                  label: Text(tr('Download', 'I-download', 'I-download'), style: sans(15, w: FontWeight.w700, color: Colors.white)),
                 ),
               ),
             ]),
@@ -857,7 +923,7 @@ class _DocumentsViewState extends State<DocumentsView> {
             const Color(0xFFFDF0EE),
             C.red,
             tr('$kMunicipality asked for a corrected copy${remark == null ? '.' : ': “${remark.text}”'}',
-                'Humiling ang $kMunicipality ng naitamang kopya${remark == null ? '.' : ': “${remark.text}”'}'),
+                'Humiling ang $kMunicipality ng naitamang kopya${remark == null ? '.' : ': “${remark.text}”'}', 'Nagpangayo ang $kMunicipality sang natadlong nga kopya${remark == null ? '.' : ': “${remark.text}”'}'),
           )
         : f.outdated
             ? (
@@ -865,7 +931,7 @@ class _DocumentsViewState extends State<DocumentsView> {
                 const Color(0xFFFFF8E1),
                 const Color(0xFF5C4400),
                 tr('Changed after signing. Print the new version, have it signed, and upload it again.',
-                    'Nabago matapos pirmahan. I-print ang bagong bersyon, papirmahan, at i-upload ulit.'),
+                    'Nabago matapos pirmahan. I-print ang bagong bersyon, papirmahan, at i-upload ulit.', 'Nabag-o pagkatapos mapirmahan. Palihog i-print ang bag-o nga bersyon, papirmahi, kag i-upload liwat.'),
               )
             : f.uploaded
                 ? (
@@ -873,13 +939,13 @@ class _DocumentsViewState extends State<DocumentsView> {
                     C.greenSoft,
                     const Color(0xFF14583D),
                     tr('Signed copy uploaded ${f.uploadedOn}${f.version > 1 ? ' (version ${f.version})' : ''}. This is your backup.',
-                        'Na-upload ang pirmadong kopya ${f.uploadedOn}${f.version > 1 ? ' (bersyon ${f.version})' : ''}. Ito ang inyong backup.'),
+                        'Na-upload ang pirmadong kopya ${f.uploadedOn}${f.version > 1 ? ' (bersyon ${f.version})' : ''}. Ito ang inyong backup.', 'Na-upload ang may pirma nga kopya ${f.uploadedOn}${f.version > 1 ? ' (bersyon ${f.version})' : ''}. Amo ini ang inyo backup.'),
                   )
                 : (
                     Icons.print_outlined,
                     C.blueSoft,
                     const Color(0xFF1B3F68),
-                    tr('Ready to download and print for signing.', 'Handa nang i-download at i-print para pirmahan.'),
+                    tr('Ready to download and print for signing.', 'Handa nang i-download at i-print para pirmahan.', 'Handa na i-download kag i-print para pirmahan.'),
                   );
 
     final canUpload = !widget.locked || f.correction;
@@ -887,29 +953,29 @@ class _DocumentsViewState extends State<DocumentsView> {
     final IconData upIcon;
     final bool upPrimary;
     if (f.correction) {
-      upLabel = tr('Upload corrected copy', 'I-upload ang naitamang kopya');
+      upLabel = tr('Upload corrected copy', 'I-upload ang naitamang kopya', 'I-upload ang natadlong nga kopya');
       upIcon = Icons.upload_rounded;
       upPrimary = true;
     } else if (f.outdated) {
-      upLabel = tr('Upload new signed copy', 'I-upload ang bagong pirmadong kopya');
+      upLabel = tr('Upload new signed copy', 'I-upload ang bagong pirmadong kopya', 'I-upload ang bag-o nga may pirma nga kopya');
       upIcon = Icons.upload_rounded;
       upPrimary = true;
     } else if (f.uploaded) {
-      upLabel = tr('Replace signed copy', 'Palitan ang pirmadong kopya');
+      upLabel = tr('Replace signed copy', 'Palitan ang pirmadong kopya', 'Ilisan ang may pirma nga kopya');
       upIcon = Icons.sync_rounded;
       upPrimary = false;
     } else {
-      upLabel = tr('Upload / take photo of signed copy', 'I-upload / kunan ng litrato ang pirmadong kopya');
+      upLabel = tr('Upload / take photo of signed copy', 'I-upload / kunan ng litrato ang pirmadong kopya', 'I-upload / kuhai sang litrato ang may pirma nga kopya');
       upIcon = Icons.photo_camera_outlined;
       upPrimary = true;
     }
 
     return _cardShell([
       _thumb(
-        paper: f.uploaded ? paperFor(rec, k, signed: true) : _paper(k, true),
+        paper: f.uploaded ? (uploadedCopyView(f, thumbnail: true) ?? paperFor(rec, k, signed: true)) : _paper(k, true),
         badge: f.uploaded ? (f.outdated ? 'OLD SIGNED COPY' : 'SIGNED COPY') : 'READY TO PRINT',
         badgeColor: f.uploaded ? (f.outdated ? C.yellowDark : C.green) : C.blue,
-        photo: f.uploaded,
+        photo: f.uploaded && f.bytes == null, // real uploads are shown as they are
         onTap: () => f.uploaded ? _viewBackup(k) : _edit(k),
       ),
       Padding(
@@ -919,9 +985,9 @@ class _DocumentsViewState extends State<DocumentsView> {
           const SizedBox(height: 4),
           Text(
             k == DocKind.certification
-                ? tr('${tanods.length} tanods certified · signatories set', '${tanods.length} tanod · may pipirma na')
+                ? tr('${tanods.length} tanods certified · signatories set', '${tanods.length} tanod · may pipirma na', '${tanods.length} ka tanod · may pipirma na')
                 : tr('${tanods.length} names · award nos. 001–${_no(tanods.isEmpty ? 0 : tanods.length - 1)}',
-                    '${tanods.length} pangalan · award no. 001–${_no(tanods.isEmpty ? 0 : tanods.length - 1)}'),
+                    '${tanods.length} pangalan · award no. 001–${_no(tanods.isEmpty ? 0 : tanods.length - 1)}', '${tanods.length} ka ngalan · award no. 001–${_no(tanods.isEmpty ? 0 : tanods.length - 1)}'),
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: sans(14, color: C.muted),
@@ -945,7 +1011,7 @@ class _DocumentsViewState extends State<DocumentsView> {
                 style: _outlined,
                 onPressed: () => _edit(k),
                 icon: Icon(widget.locked ? Icons.visibility_outlined : Icons.edit_outlined, size: 18),
-                label: Text(widget.locked ? tr('View', 'Tingnan') : tr('Edit', 'Baguhin'),
+                label: Text(widget.locked ? tr('View', 'Tingnan', 'Tan-awa') : tr('Edit', 'Baguhin', 'I-edit'),
                     style: sans(15, w: FontWeight.w600, color: C.navy)),
               ),
             ),
@@ -955,7 +1021,7 @@ class _DocumentsViewState extends State<DocumentsView> {
                 style: _outlined,
                 onPressed: () => _download(k, true),
                 icon: const Icon(Icons.download_rounded, size: 18),
-                label: Text(tr('Download', 'I-download'), style: sans(15, w: FontWeight.w600, color: C.navy)),
+                label: Text(tr('Download', 'I-download', 'I-download'), style: sans(15, w: FontWeight.w600, color: C.navy)),
               ),
             ),
           ]),

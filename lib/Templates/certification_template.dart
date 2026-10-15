@@ -30,7 +30,8 @@ const List<String> _months = [
 Future<Uint8List> generateCertificationPdf({
   required List<TanodPerson> tanodList,
   String dateOfServiceRendered = kDateOfServiceRendered,
-  String punongBarangay = '', // Filled in later from the UI
+  String punongBarangay = '', // Punong Barangay of [signingBarangay]
+  String signingBarangay = '', // the signed-in account's barangay
   DateTime? issueDate, // Defaults to the day the PDF is generated
 }) async {
   final pdf = pw.Document();
@@ -40,14 +41,23 @@ Future<Uint8List> generateCertificationPdf({
   final String year = '${date.year}';
 
   // Group scanned tanods by barangay → one certificate each
+  // One certificate per barangay the tanods LIVE in (from their ID address).
+  // Keyed by barangay + municipality so same-named barangays in different
+  // towns don't get merged.
   final Map<String, List<TanodPerson>> groupedByBarangay = {};
   for (final person in tanodList) {
-    groupedByBarangay.putIfAbsent(person.barangay, () => []).add(person);
+    final key = '${person.addressBarangay}|${person.addressMunicipality}';
+    groupedByBarangay.putIfAbsent(key, () => []).add(person);
   }
 
-  groupedByBarangay.forEach((barangayName, members) {
+  groupedByBarangay.forEach((key, members) {
+    final String barangayName = members.first.addressBarangay;
     final String barangay = _titleCase(barangayName);
-    final String municipality = _titleCase(members.first.municipality);
+    final String municipality = _titleCase(members.first.addressMunicipality);
+    // Only the account's own Punong Barangay is known; other barangays get a blank line
+    final String captain = barangayName.trim().toUpperCase() == signingBarangay.trim().toUpperCase()
+        ? punongBarangay
+        : '';
 
     pdf.addPage(
       pw.MultiPage(
@@ -157,13 +167,13 @@ Future<Uint8List> generateCertificationPdf({
               child: pw.Column(
                 children: [
                   pw.Text(
-                    punongBarangay.trim().isEmpty
+                    captain.trim().isEmpty
                         ? '(Signature over Printed Name)'
-                        : punongBarangay.trim().toUpperCase(),
+                        : captain.trim().toUpperCase(),
                     style: pw.TextStyle(
                       fontSize: 12,
                       fontWeight: pw.FontWeight.bold,
-                      fontStyle: punongBarangay.trim().isEmpty
+                      fontStyle: captain.trim().isEmpty
                           ? pw.FontStyle.italic
                           : pw.FontStyle.normal,
                     ),

@@ -9,7 +9,11 @@ Widget logoMark(double s) => Container(
       height: s,
       alignment: Alignment.center,
       decoration: BoxDecoration(color: C.yellow, borderRadius: BorderRadius.circular(s * .3)),
-      child: Text('G', style: serif(s * .55)),
+           child: ClipRRect(
+        borderRadius: BorderRadius.circular(s * .3),
+        child: Image.asset('assets/logo.png', width: s, height: s, fit: BoxFit.cover,
+            errorBuilder: (_, __, ___) => Text('G', style: serif(s * .55))),
+      ),
     );
 
 Widget pill(String text, Color bg, Color fg, {IconData? icon}) => Container(

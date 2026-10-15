@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 // Demo records shared by the barangay and municipality screens, so a message
 // or an upload made on one side shows up on the other during the demo.
 // The backend will replace this with real records.
@@ -47,6 +49,11 @@ class DocFile {
   String via = 'photo'; // 'photo' or 'file'
   bool outdated = false; // the tanod list changed after this copy was signed
   bool correction = false; // the municipality asked for a corrected copy
+
+  // The real uploaded file (photo or chosen file). null = demo data only.
+  Uint8List? bytes;
+  String? fileName;
+  bool isPdf = false;
 
   DocFile(this.kind);
 
@@ -151,7 +158,8 @@ Map<DocKind, DocFile> filesWith(int uploaded, {String on = 'Oct 13'}) => {
           ..uploadedOn = (i < uploaded) ? on : null,
     };
 
-// Builds a believable tanod list for the other barangays (demo only).
+// Builds a believable tanod list for the OTHER demo barangays on the
+// municipality side. Brgy. Abat (the signed-in barangay) never uses this.
 List<Tanod> _makeTanods(int count, int seed) {
   const firsts = [
     'Ramon', 'Eduardo', 'Nestor', 'Joel', 'Arturo', 'Rolando', 'Dennis', 'Virgilio', 'Benjie', 'Romeo',
@@ -242,7 +250,7 @@ List<BrgyRecord> _barangays() {
     position: kRepPosition,
     captain: kCaptain,
     quota: kQuota,
-    tanods: demoTanods(),
+    tanods: [], // filled only from scanned / typed IDs
     files: filesWith(0),
     status: BrgyStatus.preparing,
     updated: 'Oct 14',
@@ -383,7 +391,8 @@ class DemoStore {
   void checkAllForDemo() {
     for (final b in brgys) {
       if (b.status == BrgyStatus.sentToOppdc || b.status == BrgyStatus.released) continue;
-      if (b.tanods.isEmpty) b.tanods.addAll(_makeTanods(b.quota - 2, b.name.length));
+      // Never invent tanods for the real (signed-in) barangay
+      if (b.tanods.isEmpty && b != abat) b.tanods.addAll(_makeTanods(b.quota - 2, b.name.length));
       if (b.rep == '—') {
         b.rep = 'Rosalie T. Gonzaga';
         b.position = 'Secretary';

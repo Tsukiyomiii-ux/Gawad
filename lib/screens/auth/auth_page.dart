@@ -27,7 +27,7 @@ class _AuthPageState extends State<AuthPage> {
   Widget build(BuildContext context) {
     final w = MediaQuery.of(context).size.width;
     final mobile = w <= 560;
-    final heroH = mobile ? 340.0 : 400.0;
+    final heroH = mobile ? 370.0 : 400.0; // FIX: was 340 on phones
     const overlap = 92.0;
 
     return Scaffold(
@@ -198,7 +198,17 @@ class _Hero extends StatelessWidget {
                               BoxShadow(color: Colors.black38, blurRadius: 16, offset: Offset(0, 6), spreadRadius: -6)
                             ],
                           ),
-                          child: Text('G', style: serif(22)),
+                          // Logo from assets/logo.png (falls back to "G" if it can't load)
+                          child: ClipRRect(
+                            borderRadius: BorderRadius.circular(12),
+                            child: Image.asset(
+                              'assets/logo.png',
+                              width: 40,
+                              height: 40,
+                              fit: BoxFit.contain,
+                              errorBuilder: (_, __, ___) => Text('G', style: serif(22)),
+                            ),
+                          ),
                         ),
                         const SizedBox(width: 12),
                         Text('Gawad', style: sans(19, w: FontWeight.w700, color: Colors.white)),
@@ -212,8 +222,15 @@ class _Hero extends StatelessWidget {
             Expanded(
               child: Padding(
                 padding: EdgeInsets.fromLTRB(24, 18, 24, mobile ? 112 : 128),
-                child: Center(
-                  child: Column(mainAxisSize: MainAxisSize.min, children: [
+                // FIX: on short phones (or with large text) the welcome text was 44 px
+                // too tall for the header. It now shrinks to fit instead of overflowing.
+                child: LayoutBuilder(
+                  builder: (context, box) => Center(
+                    child: FittedBox(
+                      fit: BoxFit.scaleDown,
+                      child: SizedBox(
+                        width: box.maxWidth,
+                        child: Column(mainAxisSize: MainAxisSize.min, children: [
                     Container(
                       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 5),
                       decoration: BoxDecoration(
@@ -243,7 +260,10 @@ class _Hero extends StatelessWidget {
                           textAlign: TextAlign.center,
                           style: sans(16, color: const Color(0xFFD3E0EE), h: 1.5)),
                     ),
-                  ]),
+                        ]),
+                      ),
+                    ),
+                  ),
                 ),
               ),
             ),

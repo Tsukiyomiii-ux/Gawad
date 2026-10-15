@@ -29,18 +29,7 @@ class IdPhotocopy {
     return '${_months[now.month - 1]} ${now.day}, ${now.year}';
   }
 
-  /// One ID. [front] and [back] should be the flattened card images from `flattenCard`.
-  static Future<Uint8List> build({
-    required Uint8List front,
-    required Uint8List back,
-    String purpose = _defaultPurpose,
-  }) async {
-    final doc = pw.Document(title: 'PhilID Photocopy', author: 'Tanod ID Scanner');
-    doc.addPage(_page(front, back, '$purpose  •  ${_today()}'));
-    return doc.save();
-  }
-
-  /// MERGE: all scanned tanods in one PDF, one page per ID (used by TemplatePdfScreen).
+  /// MERGE: all scanned tanods in one PDF, one page per ID (Documents → ID photocopy sheet).
   /// Tanods without ID photos (QR scans) are listed on a cover note instead.
   static Future<Uint8List> buildAll({
     required List<TanodPerson> tanodList,

@@ -17,6 +17,16 @@ class TanodPerson {
   final String barangay;
   final String municipality;
 
+  /// Where the tanod lives, as read from the ID's address. Empty = unknown.
+  /// [barangay]/[municipality] above are the barangay that files the documents
+  /// (used for grouping and the certification); these are for ADDRESS columns.
+  final String homeBarangay;
+  final String homeMunicipality;
+
+  String get addressBarangay => homeBarangay.isNotEmpty ? homeBarangay : barangay;
+  String get addressMunicipality => homeMunicipality.isNotEmpty ? homeMunicipality : municipality;
+  String get addressLine => '$addressBarangay, $addressMunicipality';
+
   /// Flattened card photos from the OCR scanner (null for QR scans).
   /// Used by Template 4: ID Photocopy.
   final Uint8List? idFront;
@@ -42,6 +52,8 @@ class TanodPerson {
     this.idFront,
     this.idBack,
     this.scannedByOcr = false,
+    this.homeBarangay = '',
+    this.homeMunicipality = '',
   });
 
   /// Built from the OCR scanner. Birthday and address are read from the card
@@ -120,8 +132,9 @@ class TanodPerson {
         dob: (data['dob'] ?? data['dateOfBirth'] ?? 'N/A').toString(),
         pob: (data['pob'] ?? data['placeOfBirth'] ?? 'N/A').toString(),
         rawAddress: addr.isNotEmpty ? addr : '$brgy, $muni',
-        barangay: brgy.isNotEmpty ? brgy.toUpperCase() : 'ARIPDIP',
-        municipality: muni.isNotEmpty ? muni.toUpperCase() : 'SAN RAFAEL',
+        // No made-up defaults: in Gawad the barangay comes from the account
+        barangay: brgy.toUpperCase(),
+        municipality: muni.toUpperCase(),
         idFront: idFront,
         idBack: idBack,
       );
@@ -135,9 +148,9 @@ class TanodPerson {
         sex: 'N/A',
         dob: 'N/A',
         pob: 'N/A',
-        rawAddress: 'Aripdip, San Rafael',
-        barangay: 'ARIPDIP',
-        municipality: 'SAN RAFAEL',
+        rawAddress: '',
+        barangay: '',
+        municipality: '',
         idFront: idFront,
         idBack: idBack,
       );
@@ -147,9 +160,10 @@ class TanodPerson {
 
 Future<Uint8List> generatePayrollPdf({
   required List<TanodPerson> tanodList,
-  String period = 'For the period CY 2025',
-  String municipality = 'MUNICIPALITY OF SAN RAFAEL',
-  double defaultAmount = 2000.0,
+  // Always passed in from the account (see Templates/gawad_pdf.dart)
+  required String period,
+  required String municipality,
+  required double defaultAmount,
 }) async {
   final pdf = pw.Document();
 
@@ -264,8 +278,9 @@ Future<Uint8List> generatePayrollPdf({
                             _box(awardNum, flex: 7),
                             _box(tanod.fullName, flex: 24, bold: true, alignLeft: true),
                             _box('BARANGAY TANOD', flex: 20),
-                            _box(tanod.barangay, flex: 13),
-                            _box(tanod.municipality, flex: 13),
+                            // Address from the tanod's ID (falls back to the filing barangay)
+                            _box(tanod.addressBarangay, flex: 13),
+                            _box(tanod.addressMunicipality, flex: 13),
                             _box(defaultAmount.toStringAsFixed(2), flex: 11, alignRight: true),
                             _box(awardNum, flex: 7),
                             _box('', flex: 10),
