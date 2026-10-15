@@ -74,8 +74,45 @@ class _MunicipalPageState extends State<MunicipalPage> {
       ? tr('No representative yet', 'Wala pang kinatawan', 'Wala pa sang representante')
       : '${b.rep}${b.position.isEmpty ? '' : ' · ${b.position}'}';
 
+  @override
+  void initState() {
+    super.initState();
+    // New messages from barangays: tap the pop-up to open that barangay's messages
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || unreadTotal == 0) return;
+      final from = brgys.where((b) => b.unreadMuni > 0).toList()..sort((a, b) => b.unreadMuni.compareTo(a.unreadMuni));
+      final one = from.length == 1;
+      notify(
+        context,
+        one
+            ? tr('Brgy. ${from.first.name} sent you $unreadTotal new message${unreadTotal == 1 ? '' : 's'}.',
+                'May $unreadTotal bagong mensahe mula sa Brgy. ${from.first.name}.', 'May $unreadTotal ka bag-o nga mensahe halin sa Brgy. ${from.first.name}.')
+            : tr('$unreadTotal new messages from ${from.length} barangays.', '$unreadTotal bagong mensahe mula sa ${from.length} barangay.',
+                '$unreadTotal ka bag-o nga mensahe halin sa ${from.length} ka barangay.'),
+        type: NotifyType.info,
+        title: tr('New message', 'Bagong mensahe', 'Bag-o nga mensahe'),
+        onTap: () {
+          if (mounted) _open(from.first); // the barangay with the most new messages
+        },
+      );
+    });
+  }
+
   // ---------- actions ----------
-  void _signOut() => Navigator.of(context).pushReplacement(MaterialPageRoute(builder: (_) => const AuthPage()));
+  Future<void> _signOut() async {
+    final ok = await confirmAction(
+      context,
+      title: tr('Sign out?', 'Mag-sign out?', 'Mag-sign out?'),
+      message: tr('You can sign back in any time.', 'Puwede kang mag-sign in ulit kahit kailan.', 'Puwede ka liwat mag-sign in bisan san-o.'),
+      confirmLabel: tr('Sign out', 'Mag-sign out', 'Mag-sign out'),
+      icon: Icons.logout_rounded,
+      danger: true,
+    );
+    if (!ok || !mounted) return;
+    toast(context, tr('You have signed out.', 'Naka-sign out ka na.', 'Naka-sign out ka na.'), type: NotifyType.info,
+        title: tr('Signed out', 'Naka-sign out', 'Naka-sign out'));
+    Navigator.of(context).pushReplacement(MaterialPageRoute(builder: (_) => const AuthPage()));
+  }
 
   void _go(int i) => setState(() => navIndex = i);
 
@@ -84,7 +121,18 @@ class _MunicipalPageState extends State<MunicipalPage> {
     if (mounted) setState(() {});
   }
 
-  void _remind(List<BrgyRecord> list) {
+  Future<void> _remind(List<BrgyRecord> list) async {
+    final names = list.map((b) => b.name).join(', ');
+    final ok = await confirmAction(
+      context,
+      title: tr('Send a reminder?', 'Magpadala ng paalala?', 'Magpadala sang pahanumdom?'),
+      message: tr('A message will be sent to Brgy. $names asking them to finish and bring their paper set.',
+          'Magpapadala ng mensahe sa Brgy. $names para tapusin at dalhin ang kanilang papel.',
+          'Magapadala sang mensahe sa Brgy. $names para tapuson kag dal-on ang ila papel.'),
+      confirmLabel: tr('Send reminder', 'Ipadala', 'Ipadala'),
+      icon: Icons.notifications_active_outlined,
+    );
+    if (!ok || !mounted) return;
     setState(() {
       for (final b in list) {
         b.post(
@@ -97,10 +145,21 @@ class _MunicipalPageState extends State<MunicipalPage> {
       context,
       tr('Reminder sent to ${list.length} barangay${list.length == 1 ? '' : 's'}.',
           'Naipadala ang paalala sa ${list.length} barangay.', 'Napadala ang pahanumdom sa ${list.length} ka barangay.'),
+      title: tr('Reminder sent', 'Naipadala ang paalala', 'Napadala ang pahanumdom'),
     );
   }
 
-  void _approveRequest(AccountRequest r) {
+  Future<void> _approveRequest(AccountRequest r) async {
+    final ok = await confirmAction(
+      context,
+      title: tr('Approve ${r.name}?', 'Aprubahan si ${r.name}?', 'Aprobahan si ${r.name}?'),
+      message: tr('Make sure their proof of designation is valid. They will be able to submit for Brgy. ${r.barangay}.',
+          'Siguraduhing tama ang kanilang patunay. Makakapagpasa na sila para sa Brgy. ${r.barangay}.',
+          'Siguraduha nga husto ang ila pamatuod. Makapasa na sila para sa Brgy. ${r.barangay}.'),
+      confirmLabel: tr('Approve', 'Aprubahan', 'Aprobahan'),
+      icon: Icons.how_to_reg_outlined,
+    );
+    if (!ok || !mounted) return;
     setState(() {
       requests.remove(r);
       for (final b in brgys) {
@@ -115,7 +174,8 @@ class _MunicipalPageState extends State<MunicipalPage> {
       }
     });
     toast(context, tr('${r.name} can now submit for Brgy. ${r.barangay}.', 'Puwede nang magpasa si ${r.name} para sa Brgy. ${r.barangay}.',
-        'Puede na magpasa si ${r.name} para sa Brgy. ${r.barangay}.'));
+        'Puede na magpasa si ${r.name} para sa Brgy. ${r.barangay}.'),
+        title: tr('Request approved', 'Naaprubahan', 'Naaprobahan'));
   }
 
   Future<void> _declineRequest(AccountRequest r) async {
@@ -166,7 +226,8 @@ class _MunicipalPageState extends State<MunicipalPage> {
     if (ok != true || !mounted) return;
     setState(() => requests.remove(r));
     toast(context, tr('Declined. ${r.name} will see your reason.', 'Tinanggihan. Makikita ni ${r.name} ang dahilan.',
-        'Ginbalibaran. Makita ni ${r.name} ang rason.'));
+        'Ginbalibaran. Makita ni ${r.name} ang rason.'),
+        type: NotifyType.info, title: tr('Request declined', 'Tinanggihan', 'Ginbalibaran'));
   }
 
   // All barangays go to OPPDC together, as one physical set.
@@ -247,7 +308,8 @@ class _MunicipalPageState extends State<MunicipalPage> {
     });
     toast(context, tr('Submitted to OPPDC. OPPDC can open every barangay’s backup copies.',
         'Naipasa sa OPPDC. Mabubuksan ng OPPDC ang backup ng bawat barangay.',
-        'Napasa sa OPPDC. Mabuksan sang OPPDC ang backup sang kada barangay.'));
+        'Napasa sa OPPDC. Mabuksan sang OPPDC ang backup sang kada barangay.'),
+        title: tr('Submitted to OPPDC', 'Naipasa sa OPPDC', 'Napasa sa OPPDC'));
   }
 
   void _demo(String key) => setState(() {
@@ -486,8 +548,6 @@ class _MunicipalPageState extends State<MunicipalPage> {
       gap,
       _attention(),
       gap,
-      _oppdcPanel(),
-      gap,
       _stats(),
       gap,
       _progressBoard(),
@@ -724,10 +784,7 @@ class _MunicipalPageState extends State<MunicipalPage> {
               '${fixing.map((b) => b.name).join(', ')}. Mag-upload sila sang natadlong nga kopya kag ibalik ang papel.'),
           action: TextButton(
             style: TextButton.styleFrom(minimumSize: const Size(0, 46)),
-            onPressed: () => setState(() {
-              filter = BrgyStatus.corrections;
-              navIndex = 1;
-            }),
+            onPressed: () => _viewStatus(BrgyStatus.corrections),
             child: Text(tr('See', 'Tingnan', 'Tan-awa'), style: sans(15.5, w: FontWeight.w700, color: C.blue)),
           ),
         ),
@@ -752,126 +809,87 @@ class _MunicipalPageState extends State<MunicipalPage> {
     );
   }
 
-  // ---------- Submit to OPPDC (all barangays together) ----------
-  Widget _oppdcPanel() {
-    return Panel(
-      title: tr('Submit to OPPDC', 'Ipasa sa OPPDC', 'Ipasa sa OPPDC'),
-      icon: Icons.local_shipping_outlined,
-      help: tr(
-          'OPPDC receives the paper documents of all barangays together, from the municipality. Nothing is submitted '
-              'online. The signed copies the barangays uploaded stay in Gawad as a backup that OPPDC can open.',
-          'Sabay-sabay na tinatanggap ng OPPDC mula sa munisipyo ang papel ng lahat ng barangay. Walang ipinapasa online. '
-              'Mananatili sa Gawad ang na-upload na pirmadong kopya bilang backup na mabubuksan ng OPPDC.',
-          'Dungan nga ginabaton sang OPPDC halin sa munisipyo ang papel sang tanan nga barangay. Wala sang ginapasa online. '
-              'Magapabilin sa Gawad ang na-upload nga may pirma nga kopya bilang backup nga mabuksan sang OPPDC.'),
-      trailing: Text(tr('$checkedCount of ${brgys.length} checked', '$checkedCount sa ${brgys.length} nasuri', '$checkedCount sa ${brgys.length} nausisa'),
-          style: sans(14.5, w: FontWeight.w600, color: C.muted)),
-      child: store.sentToOppdc
-          ? Container(
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(color: C.greenSoft, borderRadius: BorderRadius.circular(14)),
-              child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                const Icon(Icons.verified_outlined, color: C.green),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Text(
-                    tr('Submitted to OPPDC ${store.sentOn}. All ${brgys.length} paper sets were delivered, and OPPDC can open every barangay’s backup copies.',
-                        'Naipasa sa OPPDC ${store.sentOn}. Naihatid ang ${brgys.length} papel, at mabubuksan ng OPPDC ang backup ng bawat barangay.',
-                        'Napasa sa OPPDC ${store.sentOn}. Naihatod ang ${brgys.length} ka papel, kag mabuksan sang OPPDC ang backup sang kada barangay.'),
-                    style: sans(15.5, color: const Color(0xFF14583D), h: 1.5),
-                  ),
-                ),
-              ]),
-            )
-          : Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-              Text(
-                tr('All barangays go to OPPDC together, as one set of paper documents.',
-                    'Sabay-sabay na ipapasa sa OPPDC ang lahat ng barangay, bilang isang set ng papel.',
-                    'Dungan nga ipasa sa OPPDC ang tanan nga barangay, bilang isa ka set sang papel.'),
-                style: sans(15.5, color: C.ink, h: 1.5),
-              ),
-              const SizedBox(height: 12),
-              ClipRRect(
-                borderRadius: BorderRadius.circular(99),
-                child: LinearProgressIndicator(
-                  value: brgys.isEmpty ? 0 : checkedCount / brgys.length,
-                  minHeight: 10,
-                  backgroundColor: const Color(0xFFE3EAF2),
-                  valueColor: const AlwaysStoppedAnimation(C.green),
-                ),
-              ),
-              const SizedBox(height: 14),
-              if (notChecked.isNotEmpty) ...[
-                Text(tr('Still waiting for:', 'Hinihintay pa ang:', 'Ginahulat pa ang:'), style: sans(14.5, w: FontWeight.w700, color: C.muted)),
-                const SizedBox(height: 8),
-                Wrap(spacing: 8, runSpacing: 8, children: [
-                  for (final b in notChecked)
-                    ActionChip(
-                      onPressed: () => _open(b),
-                      backgroundColor: statusColors(b.status).$1,
-                      side: BorderSide.none,
-                      label: Text('${b.name} · ${statusLabel(b.status)}',
-                          style: sans(14, w: FontWeight.w600, color: statusColors(b.status).$2)),
-                    ),
-                ]),
-                const SizedBox(height: 14),
-              ],
-              Align(
-                alignment: Alignment.centerLeft,
-                child: FilledButton.icon(
-                  style: primaryStyle(bg: C.green, fg: Colors.white),
-                  onPressed: allChecked ? _sendToOppdc : null,
-                  icon: const Icon(Icons.local_shipping_outlined, size: 19),
-                  label: Text(allChecked
-                      ? tr('Submit all ${brgys.length} barangays to OPPDC', 'Ipasa ang ${brgys.length} barangay sa OPPDC',
-                          'Ipasa ang ${brgys.length} ka barangay sa OPPDC')
-                      : tr('Available when every barangay is checked', 'Mabubuksan kapag nasuri na ang lahat',
-                          'Mabuksan kon nausisa na ang tanan')),
-                ),
-              ),
-            ]),
+  // Status colours for the pop-ups: done = blue, to check = yellow, corrections = red
+  NotifyType _statusType(BrgyStatus? s) => switch (s) {
+        BrgyStatus.submitted => NotifyType.warning,
+        BrgyStatus.corrections => NotifyType.error,
+        _ => NotifyType.info,
+      };
+
+  void _setFilter(BrgyStatus? s) {
+    setState(() => filter = s);
+    final n = s == null ? brgys.length : by(s).length;
+    toast(
+      context,
+      s == null
+          ? tr('Showing all ${brgys.length} barangays.', 'Ipinapakita ang lahat ng ${brgys.length} barangay.', 'Ginapakita ang tanan nga ${brgys.length} ka barangay.')
+          : tr('$n barangay${n == 1 ? '' : 's'}: ${statusLabel(s)}.', '$n barangay: ${statusLabel(s)}.', '$n ka barangay: ${statusLabel(s)}.'),
+      type: _statusType(s),
+      title: s == null ? tr('Filter cleared', 'Inalis ang filter', 'Ginkuha ang filter') : tr('Filter applied', 'Na-filter', 'Na-filter'),
     );
   }
 
+  // "View" on a tile: open the Barangays page filtered to that status
+  void _viewStatus(BrgyStatus s) {
+    setState(() => navIndex = 1);
+    _setFilter(s);
+  }
+
+  // 5 tiles, one per stage. Colours match the "Where every barangay is" bar below.
   Widget _stats() {
+    final n = brgys.length;
+    final preparing = by(BrgyStatus.preparing).length;
     final toCheck = by(BrgyStatus.submitted).length;
     final fixing = by(BrgyStatus.corrections).length;
-    return Grid(children: [
+    final notStarted = by(BrgyStatus.notStarted).length;
+    return Grid(maxCols: 5, minWidth: 190, children: [
       StatTile(
         icon: Icons.verified_outlined,
-        tint: C.green,
-        value: '$checkedCount / ${brgys.length}',
+        tint: statusBar(BrgyStatus.checked),
+        value: '$checkedCount / $n',
         label: tr('Barangays checked', 'Nasuring barangay', 'Nausisa nga barangay'),
         note: tr('Paper set complete and correct', 'Kumpleto at tama ang papel', 'Kompleto kag husto ang papel'),
-        progress: checkedCount / brgys.length,
+        progress: n == 0 ? 0 : checkedCount / n,
+        onView: () => _viewStatus(BrgyStatus.checked),
+      ),
+      StatTile(
+        icon: Icons.edit_note_rounded,
+        tint: statusBar(BrgyStatus.preparing),
+        value: '$preparing',
+        label: tr('Preparing', 'Naghahanda', 'Nagahanda'),
+        note: tr('Still filling in their documents', 'Inihahanda pa ang dokumento', 'Ginahanda pa ang dokumento'),
+        onView: () => _viewStatus(BrgyStatus.preparing),
       ),
       StatTile(
         icon: Icons.fact_check_outlined,
-        tint: C.yellowDark,
+        tint: statusBar(BrgyStatus.submitted),
         value: '$toCheck',
         label: tr('Paper sets to check', 'Papel na susuriin', 'Papel nga usisaon'),
         note: toCheck == 0
             ? tr('All caught up', 'Wala nang naghihintay', 'Wala na sang nagahulat')
             : tr('Waiting at your office', 'Naghihintay sa opisina', 'Nagahulat sa opisina'),
+        onView: () => _viewStatus(BrgyStatus.submitted),
       ),
       StatTile(
         icon: Icons.assignment_return_outlined,
-        tint: C.red,
+        tint: statusBar(BrgyStatus.corrections),
         value: '$fixing',
         label: tr('Fixing corrections', 'Nagtatama', 'Nagatadlong'),
         note: tr('Barangay is correcting the paper', 'Itinatama ng barangay ang papel', 'Ginatadlong sang barangay ang papel'),
+        onView: () => _viewStatus(BrgyStatus.corrections),
       ),
       StatTile(
-        icon: Icons.inventory_2_outlined,
-        tint: C.blue,
-        value: '$backupsComplete / ${brgys.length}',
-        label: tr('Backups complete', 'Kumpletong backup', 'Kompleto nga backup'),
-        note: tr('All 4 signed copies uploaded', 'Na-upload ang 4 na kopya', 'Na-upload ang 4 ka kopya'),
-        progress: backupsComplete / brgys.length,
+        icon: Icons.hourglass_empty_rounded,
+        tint: C.muted, // the bar's light grey is too pale for text, so a darker grey here
+        value: '$notStarted',
+        label: tr('Not started', 'Hindi pa nagsisimula', 'Wala pa nagsugod'),
+        note: tr('No documents yet', 'Wala pang dokumento', 'Wala pa sang dokumento'),
+        onView: () => _viewStatus(BrgyStatus.notStarted),
       ),
     ]);
   }
 
+  // Compact "line" version: title + bar on one row, small legend underneath
   Widget _progressBoard() {
     final order = [
       BrgyStatus.sentToOppdc,
@@ -881,28 +899,37 @@ class _MunicipalPageState extends State<MunicipalPage> {
       BrgyStatus.preparing,
       BrgyStatus.notStarted,
     ];
-    return Panel(
-      title: tr('Where every barangay is', 'Nasaan na ang bawat barangay', 'Diin na ang kada barangay'),
-      icon: Icons.stacked_bar_chart_rounded,
+    final bar = ClipRRect(
+      borderRadius: BorderRadius.circular(99),
+      child: SizedBox(
+        height: 10,
+        child: Row(children: [
+          for (final s in order)
+            if (by(s).isNotEmpty) Expanded(flex: by(s).length, child: ColoredBox(color: statusBar(s))),
+        ]),
+      ),
+    );
+    final title = Row(mainAxisSize: MainAxisSize.min, children: [
+      const Icon(Icons.stacked_bar_chart_rounded, size: 18, color: C.navy),
+      const SizedBox(width: 8),
+      Text(tr('Where every barangay is', 'Nasaan na ang bawat barangay', 'Diin na ang kada barangay'),
+          style: sans(15, w: FontWeight.w700, color: C.navy)),
+    ]);
+    return Container(
+      padding: const EdgeInsets.fromLTRB(18, 12, 18, 10),
+      decoration: BoxDecoration(color: Colors.white, border: Border.all(color: C.line), borderRadius: BorderRadius.circular(14)),
       child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-        ClipRRect(
-          borderRadius: BorderRadius.circular(99),
-          child: SizedBox(
-            height: 16,
-            child: Row(children: [
-              for (final s in order)
-                if (by(s).isNotEmpty) Expanded(flex: by(s).length, child: ColoredBox(color: statusBar(s))),
-            ]),
-          ),
-        ),
-        const SizedBox(height: 14),
-        Wrap(spacing: 18, runSpacing: 10, children: [
+        LayoutBuilder(builder: (context, box) => box.maxWidth >= 620
+            ? Row(children: [title, const SizedBox(width: 16), Expanded(child: bar)])
+            : Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [title, const SizedBox(height: 8), bar])),
+        const SizedBox(height: 8),
+        Wrap(spacing: 14, runSpacing: 4, children: [
           for (final s in order)
             if (by(s).isNotEmpty)
               Row(mainAxisSize: MainAxisSize.min, children: [
-                Container(width: 12, height: 12, decoration: BoxDecoration(color: statusBar(s), borderRadius: BorderRadius.circular(4))),
-                const SizedBox(width: 7),
-                Text('${statusLabel(s)} · ${by(s).length}', style: sans(15, color: C.ink)),
+                Container(width: 9, height: 9, decoration: BoxDecoration(color: statusBar(s), borderRadius: BorderRadius.circular(3))),
+                const SizedBox(width: 5),
+                Text('${statusLabel(s)} · ${by(s).length}', style: sans(13, color: C.muted)),
               ]),
         ]),
       ]),
@@ -1100,7 +1127,7 @@ class _MunicipalPageState extends State<MunicipalPage> {
         backgroundColor: Colors.white,
         side: BorderSide(color: on ? C.navy : C.line, width: 1.5),
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-        onSelected: (_) => setState(() => filter = s),
+        onSelected: (_) => _setFilter(s),
       );
     }
 
@@ -1272,22 +1299,29 @@ class _MunicipalPageState extends State<MunicipalPage> {
 
   // ================= Account =================
   Widget _accountPage() {
-    Widget choices<T>(String label, T current, List<(T, String)> options, void Function(T) onPick) =>
+    // [colors]: optional colour per option (same order), like the barangay Account page
+    Widget choices<T>(String label, T current, List<(T, String)> options, void Function(T) onPick, {List<Color>? colors}) =>
         Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Text(label, style: sans(16, w: FontWeight.w700, color: C.navy)),
           const SizedBox(height: 10),
           Wrap(spacing: 8, runSpacing: 8, children: [
-            for (final (v, text) in options)
-              ChoiceChip(
-                label: Text(text, style: sans(15.5, w: FontWeight.w600, color: current == v ? Colors.white : C.navy)),
-                selected: current == v,
-                showCheckmark: false,
-                selectedColor: C.navy,
-                backgroundColor: Colors.white,
-                side: BorderSide(color: current == v ? C.navy : C.line, width: 1.5),
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                onSelected: (_) => onPick(v),
-              ),
+            for (var i = 0; i < options.length; i++)
+              Builder(builder: (context) {
+                final (v, text) = options[i];
+                final on = current == v;
+                final c = colors == null ? C.navy : colors[i];
+                final onText = c == C.yellowDark ? C.navy : Colors.white; // dark text on yellow
+                return ChoiceChip(
+                  label: Text(text, style: sans(15.5, w: FontWeight.w600, color: on ? onText : (colors == null ? C.navy : c))),
+                  selected: on,
+                  showCheckmark: false,
+                  selectedColor: c,
+                  backgroundColor: colors == null ? Colors.white : c.withValues(alpha: .08),
+                  side: BorderSide(color: on ? c : (colors == null ? C.line : c.withValues(alpha: .45)), width: 1.5),
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                  onSelected: (_) => onPick(v),
+                );
+              }),
           ]),
         ]);
 
@@ -1297,36 +1331,7 @@ class _MunicipalPageState extends State<MunicipalPage> {
       Text(tr('Your details and display settings.', 'Ang inyong detalye at settings.', 'Ang imo detalye kag settings.'),
           style: sans(16, color: C.muted, h: 1.5)),
       const SizedBox(height: 20),
-      Panel(
-        title: tr('Display', 'Itsura', 'Itsura'),
-        icon: Icons.text_fields_rounded,
-        child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-          choices<double>(
-            tr('Text size', 'Laki ng letra', 'Kadako sang letra'),
-            textSize.value,
-            [
-              (1.0, tr('Normal', 'Normal', 'Normal')),
-              (1.15, tr('Large', 'Malaki', 'Dako')),
-              (1.3, tr('Larger', 'Mas malaki', 'Mas dako')),
-            ],
-            (v) => textSize.value = v,
-          ),
-          const SizedBox(height: 22),
-          choices<String>(
-            tr('Language', 'Wika', 'Pinulongan'),
-            appLang.value,
-            const [('en', 'English'), ('fil', 'Filipino'), ('hil', 'Hiligaynon')],
-            (v) => appLang.value = v,
-          ),
-          const SizedBox(height: 8),
-          Text(
-            tr('Filipino and Hiligaynon are first drafts.', 'Unang bersyon pa lang ang Filipino at Hiligaynon.',
-                'Una pa lang nga bersyon ang Filipino kag Hiligaynon.'),
-            style: sans(14, color: C.muted),
-          ),
-        ]),
-      ),
-      const SizedBox(height: 20),
+      // Account details first, then display settings (same order as the barangay side)
       Panel(
         child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
           Row(children: [
@@ -1347,15 +1352,45 @@ class _MunicipalPageState extends State<MunicipalPage> {
           _kv(tr('Account from', 'Account mula sa', 'Account halin sa'),
               tr('OPPDC (username and temporary password)', 'OPPDC (username at pansamantalang password)',
                   'OPPDC (username kag temporaryo nga password)')),
-          const SizedBox(height: 12),
-          Align(
-            alignment: Alignment.centerLeft,
-            child: OutlinedButton.icon(
-              style: outlineStyle(fg: C.red, border: const Color(0xFFF0C7C3)),
-              onPressed: _signOut,
-              icon: const Icon(Icons.logout, size: 18),
-              label: Text(tr('Sign out', 'Mag-sign out', 'Mag-sign out')),
-            ),
+          // Sign out is in the side menu / profile menu (same as the barangay side)
+        ]),
+      ),
+      const SizedBox(height: 20),
+      Panel(
+        title: tr('Display', 'Itsura', 'Itsura'),
+        icon: Icons.text_fields_rounded,
+        child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          choices<double>(
+            tr('Text size', 'Laki ng letra', 'Kadako sang letra'),
+            textSize.value,
+            [
+              (1.0, tr('Normal', 'Normal', 'Normal')),
+              (1.15, tr('Large', 'Malaki', 'Dako')),
+              (1.3, tr('Larger', 'Mas malaki', 'Mas dako')),
+            ],
+            (v) {
+              textSize.value = v;
+              toast(context, tr('Text size changed.', 'Napalitan ang laki ng letra.', 'Nabag-o ang kadakuon sang letra.'), type: NotifyType.info,
+                  title: tr('Display updated', 'Na-update ang itsura', 'Na-update ang itsura'));
+            },
+            colors: const [C.blue, C.green, C.yellowDark], // Normal, Large, Larger
+          ),
+          const SizedBox(height: 22),
+          choices<String>(
+            tr('Language', 'Wika', 'Pinulongan'),
+            appLang.value,
+            const [('en', 'English'), ('fil', 'Filipino'), ('hil', 'Hiligaynon')],
+            (v) {
+              setState(() => appLang.value = v); // redraw this screen in the new language
+              toast(context, tr('Language set to English.', 'Filipino na ang wika.', 'Hiligaynon na ang lenggwahe.'), type: NotifyType.info,
+                  title: tr('Language changed', 'Napalitan ang wika', 'Nabag-o ang lenggwahe'));
+            },
+          ),
+          const SizedBox(height: 8),
+          Text(
+            tr('Filipino and Hiligaynon are first drafts.', 'Unang bersyon pa lang ang Filipino at Hiligaynon.',
+                'Una pa lang nga bersyon ang Filipino kag Hiligaynon.'),
+            style: sans(14, color: C.muted),
           ),
         ]),
       ),

@@ -12,7 +12,12 @@ Widget logoMark(double s) => Container(
       height: s,
       alignment: Alignment.center,
       decoration: BoxDecoration(color: C.yellow, borderRadius: BorderRadius.circular(s * .3)),
-      child: Text('G', style: serif(s * .55)),
+      // Same logo as the barangay dashboard (assets/logo.png); "G" if it can't load
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(s * .3),
+        child: Image.asset('assets/logo.png', width: s, height: s, fit: BoxFit.cover,
+            errorBuilder: (_, __, ___) => Text('G', style: serif(s * .55))),
+      ),
     );
 
 Widget pill(String text, Color bg, Color fg, {IconData? icon}) => Container(
@@ -113,6 +118,7 @@ class StatTile extends StatelessWidget {
   final Color tint;
   final String value, label, note;
   final double? progress;
+  final VoidCallback? onView; // optional "View" button (same colour as the tile)
   const StatTile({
     super.key,
     required this.icon,
@@ -121,6 +127,7 @@ class StatTile extends StatelessWidget {
     required this.label,
     required this.note,
     this.progress,
+    this.onView,
   });
 
   @override
@@ -136,6 +143,18 @@ class StatTile extends StatelessWidget {
           ),
           const SizedBox(width: 12),
           Expanded(child: Text(label, style: sans(15, w: FontWeight.w600, color: C.muted))),
+          if (onView != null)
+            TextButton(
+              style: TextButton.styleFrom(
+                foregroundColor: tint,
+                backgroundColor: tint.withValues(alpha: .1),
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                minimumSize: const Size(0, 34),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(9)),
+              ),
+              onPressed: onView,
+              child: Text(tr('View', 'Tingnan', 'Tan-awa'), style: sans(14, w: FontWeight.w700, color: tint)),
+            ),
         ]),
         const SizedBox(height: 16),
         Text(value, style: sans(28, w: FontWeight.w700, color: C.navy, h: 1.1)),

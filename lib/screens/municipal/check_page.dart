@@ -387,6 +387,17 @@ class _CheckPageState extends State<CheckPage> {
         false,
       ));
     }
+    // Missing inputs (same as the barangay side): tanods with no front/back ID photo on file
+    final noPhotos = b.tanods.where((t) => t.idFront == null || t.idBack == null).length;
+    if (noPhotos > 0 && b.status != BrgyStatus.notStarted) {
+      items.add((
+        Icons.add_a_photo_outlined,
+        tr('$noPhotos tanod${noPhotos == 1 ? '' : 's'} with no ID photo on file (missing inputs). Check the ID photocopy sheet on paper.',
+            '$noPhotos tanod ang walang litrato ng ID (kulang). Suriin ang ID photocopy sheet sa papel.',
+            '$noPhotos ka tanod ang wala sang litrato sang ID (kulang). Usisaa ang ID photocopy sheet sa papel.'),
+        false,
+      ));
+    }
     final missing = [for (final f in b.files.values) if (!f.uploaded) f.kind.title];
     if (missing.isNotEmpty && b.status != BrgyStatus.notStarted) {
       items.add((
@@ -548,7 +559,7 @@ class _CheckPageState extends State<CheckPage> {
                   : null,
             ),
             icon: const Icon(Icons.visibility_outlined, size: 18),
-            label: Text(tr('View backup', 'Tingnan ang backup', 'Tan-awa ang backup')),
+            label: Text(tr('View Digital Copy', 'Tingnan ang Digital na Kopya', 'Tan-awa ang Digital nga Kopya')),
           ),
           if (canReview && !ok)
             OutlinedButton.icon(

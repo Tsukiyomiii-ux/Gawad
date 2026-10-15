@@ -1,0 +1,48 @@
+{
+  "project_info": {
+    "project_number": "459578886179",
+    "project_id": "gawad-8a588",
+    "storage_bucket": "gawad-8a588.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:459578886179:android:28a882db738c772e40c996",
+        "android_client_info": {
+          "package_name": "com.example.data_base_gawad"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBDL6T46xXJJaLyBQZYryFCrCUmpOqwggg"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:459578886179:android:ff2c47ddd60634e740c996",
+        "android_client_info": {
+          "package_name": "com.example.tanod_incentives"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBDL6T46xXJJaLyBQZYryFCrCUmpOqwggg"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
