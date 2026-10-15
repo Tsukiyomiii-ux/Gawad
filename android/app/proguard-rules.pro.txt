@@ -1,0 +1,12 @@
+# ML Kit text recognition: only the Latin reader is used. The Chinese,
+# Devanagari, Japanese and Korean readers are optional add-ons that are not
+# installed, so tell R8 (release build shrinker) not to fail on them.
+-dontwarn com.google.mlkit.vision.text.chinese.**
+-dontwarn com.google.mlkit.vision.text.devanagari.**
+-dontwarn com.google.mlkit.vision.text.japanese.**
+-dontwarn com.google.mlkit.vision.text.korean.**
+
+# Keep ML Kit classes the app uses
+-keep class com.google.mlkit.** { *; }
+-keep class com.google_mlkit_text_recognition.** { *; }
+-keep class com.google_mlkit_barcode_scanning.** { *; }

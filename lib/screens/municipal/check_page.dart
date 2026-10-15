@@ -18,16 +18,17 @@ import 'package:tanod_incentives/screens/dashboard/documents_view.dart' show sho
 List<(String, String, DocKind?)> quickMistakes() => [
       (
         tr('Name doesn’t match ID', 'Hindi tugma sa ID', 'Indi pareho sa ID'),
-        tr('A name on the paper doesn’t match the tanod’s ID. Please correct the spelling.',
-            'May pangalan sa papel na hindi tugma sa ID ng tanod. Pakitama ang baybay.',
-            'May ngalan sa papel nga indi pareho sa ID sang tanod. Palihog tadlunga ang spelling.'),
-        DocKind.masterlist,
+        tr('A name on the Certification doesn’t match the tanod’s ID. Please correct the spelling.',
+            'May pangalan sa Certification na hindi tugma sa ID ng tanod. Pakitama ang baybay.',
+            'May ngalan sa Certification nga indi pareho sa ID sang tanod. Palihog tadlunga ang spelling.'),
+        DocKind.certification,
       ),
       (
         tr('Missing signature', 'Kulang ang pirma', 'Kulang ang pirma'),
-        tr('A signature is missing on the paper copy.', 'May kulang na pirma sa papel na kopya.',
-            'May kulang nga pirma sa papel nga kopya.'),
-        null,
+        tr('The Punong Barangay’s signature is missing on the Certification.',
+            'Kulang ang pirma ng Punong Barangay sa Certification.',
+            'Kulang ang pirma sang Punong Barangay sa Certification.'),
+        DocKind.certification,
       ),
       (
         tr('ID copy needs 3 signatures', 'Kulang sa 3 pirma ang ID', 'Kulang sa 3 ka pirma ang ID'),
@@ -36,17 +37,16 @@ List<(String, String, DocKind?)> quickMistakes() => [
         DocKind.idSheet,
       ),
       (
-        tr('Wrong year in title', 'Mali ang taon', 'Sayop ang tuig'),
-        tr('The year in the overhead title is wrong.', 'Mali ang taon sa pamagat sa itaas.',
-            'Sayop ang tuig sa titulo sa ibabaw.'),
-        DocKind.payroll,
+        tr('ID copy unclear', 'Malabo ang kopya ng ID', 'Indi klaro ang kopya sang ID'),
+        tr('An ID photocopy is blurry or cut off. Please make a clearer copy.',
+            'May kopya ng ID na malabo o putol. Pakigawa ng mas malinaw na kopya.',
+            'May kopya sang ID nga malabo ukon utod. Palihog himua nga mas klaro.'),
+        DocKind.idSheet,
       ),
       (
-        tr('Numbers don’t match', 'Hindi tugma ang numero', 'Indi pareho ang numero'),
-        tr('An award number on the Payroll doesn’t match the Masterlist.',
-            'May award number sa Payroll na hindi tugma sa Masterlist.',
-            'May award number sa Payroll nga indi pareho sa Masterlist.'),
-        DocKind.payroll,
+        tr('Wrong year', 'Mali ang taon', 'Sayop ang tuig'),
+        tr('The year on the Certification is wrong.', 'Mali ang taon sa Certification.', 'Sayop ang tuig sa Certification.'),
+        DocKind.certification,
       ),
       (
         tr('Missing document', 'Kulang na dokumento', 'Kulang nga dokumento'),
@@ -58,13 +58,13 @@ List<(String, String, DocKind?)> quickMistakes() => [
         tr('Too many tanods', 'Sobra ang tanod', 'Sobra ang tanod'),
         tr('There are more tanods than the limit allowed.', 'Sobra ang tanod sa limitang pinapayagan.',
             'Sobra ang tanod sa limit nga gintugot.'),
-        DocKind.masterlist,
+        DocKind.certification,
       ),
       (
         tr('Signatory spelled differently', 'Iba ang baybay ng pumirma', 'Lain ang spelling sang pumirma'),
-        tr('A signatory’s name is spelled differently from the other documents.',
-            'Iba ang baybay ng pangalan ng pumirma kumpara sa ibang dokumento.',
-            'Lain ang spelling sang ngalan sang pumirma kumpara sa iban nga dokumento.'),
+        tr('The Punong Barangay’s name is spelled differently from the account details.',
+            'Iba ang baybay ng pangalan ng Punong Barangay kumpara sa account.',
+            'Lain ang spelling sang ngalan sang Punong Barangay kumpara sa account.'),
         DocKind.certification,
       ),
     ];
@@ -135,7 +135,7 @@ class _CheckPageState extends State<CheckPage> {
   bool get _blocking => b.tanods.length > b.quota || _dupNames.isNotEmpty || _unchecked > 0;
 
   bool get canMarkChecked =>
-      canReview && b.paperOk.length == DocKind.values.length && b.toFix.isEmpty && b.backupComplete && !_blocking;
+      canReview && kBarangayDocs.every(b.paperOk.contains) && b.toFix.isEmpty && b.backupComplete && !_blocking;
 
   // ---------- actions ----------
   Future<void> _send(String text, DocKind? doc) async {
@@ -339,7 +339,7 @@ class _CheckPageState extends State<CheckPage> {
   }
 
   Widget _header() {
-    final (bg, fg) = statusColors(b.status);
+    final (bg, fg) = statusColors(muniStage(b.status));
     return Container(
       color: Colors.white,
       padding: const EdgeInsets.fromLTRB(8, 10, 20, 12),
@@ -361,7 +361,7 @@ class _CheckPageState extends State<CheckPage> {
             ),
           ]),
         ),
-        pill(statusLabel(b.status), bg, fg),
+        pill(statusLabel(muniStage(b.status)), bg, fg),
       ]),
     );
   }
@@ -392,9 +392,9 @@ class _CheckPageState extends State<CheckPage> {
         step(2, tr('If the paper is correct, tap “Paper is correct”. If not, tap “Something’s wrong” and write what to fix.',
             'Kung tama ang papel, pindutin ang “Tama ang papel”. Kung hindi, pindutin ang “May mali” at isulat ang itatama.',
             'Kon husto ang papel, pinduta ang “Husto ang papel”. Kon indi, pinduta ang “May sala” kag isulat ang tadlungon.')),
-        step(3, tr('When all four are correct and every backup is uploaded, mark the barangay as checked.',
-            'Kapag tama ang apat at na-upload ang lahat ng backup, markahang nasuri na ang barangay.',
-            'Kon husto ang apat kag na-upload ang tanan nga backup, markahan nga nausisa na ang barangay.')),
+        step(3, tr('When both are correct and every backup is uploaded, mark the barangay as checked.',
+            'Kapag tama ang dalawa at na-upload ang lahat ng backup, markahang nasuri na ang barangay.',
+            'Kon husto ang duha kag na-upload ang tanan nga backup, markahan nga nausisa na ang barangay.')),
       ]),
     );
   }
@@ -525,11 +525,11 @@ class _CheckPageState extends State<CheckPage> {
           'Ang papel ang ginausisa ninyo. Ang na-upload nga kopya ang backup sang barangay sang amo nga papel; buksan ini '
               'para ikumpara ukon tan-awon sa ulihi. Mabuksan man ini sang OPPDC.'),
       trailing: Text(
-        tr('${b.paperOk.length} of 4 correct', '${b.paperOk.length} sa 4 tama', '${b.paperOk.length} sa 4 husto'),
+        tr('${b.paperOkCount} of ${kBarangayDocs.length} correct', '${b.paperOkCount} sa ${kBarangayDocs.length} tama', '${b.paperOkCount} sa ${kBarangayDocs.length} husto'),
         style: sans(14.5, w: FontWeight.w600, color: C.muted),
       ),
       child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-        for (final k in DocKind.values) ...[_docRow(k), const SizedBox(height: 10)],
+        for (final k in kBarangayDocs) ...[_docRow(k), const SizedBox(height: 10)],
       ]),
     );
   }
@@ -577,6 +577,15 @@ class _CheckPageState extends State<CheckPage> {
               Text(k.title, style: sans(16.5, w: FontWeight.w700, color: C.navy)),
               const SizedBox(height: 2),
               Text(backupText, style: sans(14, w: FontWeight.w600, color: backupColor)),
+              // PAPER CHECK: the automatic check had doubts about this upload
+              if (f.uploaded && f.checkNote != null && !f.checkOk) ...[
+                const SizedBox(height: 4),
+                Row(children: [
+                  const Icon(Icons.report_gmailerrorred_rounded, size: 16, color: Color(0xFF7A5B00)),
+                  const SizedBox(width: 6),
+                  Expanded(child: Text(f.checkNote!, style: sans(13.5, w: FontWeight.w600, color: const Color(0xFF7A5B00)))),
+                ]),
+              ],
               if (f.correction && remark != null) ...[
                 const SizedBox(height: 4),
                 Text('“${remark.text}”', maxLines: 3, overflow: TextOverflow.ellipsis, style: sans(14, color: C.ink, h: 1.4)),
@@ -624,8 +633,8 @@ class _CheckPageState extends State<CheckPage> {
                   : () {
                       setState(() => b.paperOk.add(k));
                       cloud.setPaperOk(b, k, true); // FIREBASE
-                      toast(context, tr('${k.title} marked as correct. ${b.paperOk.length} of 4 done.',
-                          'Tama ang ${k.title}. ${b.paperOk.length} sa 4 tapos.', 'Husto ang ${k.title}. ${b.paperOk.length} sa 4 human.'),
+                      toast(context, tr('${k.title} marked as correct. ${b.paperOkCount} of ${kBarangayDocs.length} done.',
+                          'Tama ang ${k.title}. ${b.paperOkCount} sa ${kBarangayDocs.length} tapos.', 'Husto ang ${k.title}. ${b.paperOkCount} sa ${kBarangayDocs.length} human.'),
                           title: tr('Paper is correct', 'Tama ang papel', 'Husto ang papel'));
                     },
               icon: const Icon(Icons.check_rounded, size: 18),
@@ -666,8 +675,8 @@ class _CheckPageState extends State<CheckPage> {
     } else if (!b.backupComplete) {
       reason = tr('Every document needs an up-to-date backup first.', 'Kailangan munang may bagong backup ang bawat dokumento.',
           'Kinahanglan anay may bag-o nga backup ang kada dokumento.');
-    } else if (b.paperOk.length < 4) {
-      reason = tr('Check all four documents on paper.', 'Suriin ang apat na dokumento sa papel.', 'Usisaa ang apat ka dokumento sa papel.');
+    } else if (b.paperOkCount < kBarangayDocs.length) {
+      reason = tr('Check both documents on paper.', 'Suriin ang dalawang dokumento sa papel.', 'Usisaa ang duha ka dokumento sa papel.');
     } else {
       reason = tr('Everything is correct. You can mark it as checked.', 'Tama ang lahat. Puwede nang markahang nasuri.',
           'Husto ang tanan. Puede na markahan nga nausisa.');
@@ -682,7 +691,7 @@ class _CheckPageState extends State<CheckPage> {
             child: ClipRRect(
               borderRadius: BorderRadius.circular(99),
               child: LinearProgressIndicator(
-                value: b.paperOk.length / 4,
+                value: b.paperOkCount / kBarangayDocs.length,
                 minHeight: 8,
                 backgroundColor: const Color(0xFFE3EAF2),
                 valueColor: const AlwaysStoppedAnimation(C.green),
@@ -690,7 +699,7 @@ class _CheckPageState extends State<CheckPage> {
             ),
           ),
           const SizedBox(width: 12),
-          Text(tr('${b.paperOk.length}/4 correct', '${b.paperOk.length}/4 tama', '${b.paperOk.length}/4 husto'),
+          Text(tr('${b.paperOkCount}/${kBarangayDocs.length} correct', '${b.paperOkCount}/${kBarangayDocs.length} tama', '${b.paperOkCount}/${kBarangayDocs.length} husto'),
               style: sans(15, w: FontWeight.w700, color: C.navy)),
         ]),
         const SizedBox(height: 16),
@@ -708,6 +717,14 @@ class _CheckPageState extends State<CheckPage> {
 }
 
 // Status colors: (background, text). Shared with the municipality dashboard.
+/// The municipality only sees 3 stages (same as the Overview tiles):
+///   Complete (received) · Documents on the way (barangay pressed Share) · Not started (everything else)
+BrgyStatus muniStage(BrgyStatus s) => switch (s) {
+      BrgyStatus.checked || BrgyStatus.sentToOppdc || BrgyStatus.released => BrgyStatus.checked,
+      BrgyStatus.submitted => BrgyStatus.submitted,
+      _ => BrgyStatus.notStarted,
+    };
+
 (Color, Color) statusColors(BrgyStatus s) => switch (s) {
       BrgyStatus.checked || BrgyStatus.released => (C.greenSoft, const Color(0xFF14583D)),
       BrgyStatus.sentToOppdc => (const Color(0xFFE4ECF6), C.navy),

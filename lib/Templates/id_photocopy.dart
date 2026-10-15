@@ -1,6 +1,7 @@
 import 'dart:typed_data';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
+import 'package:image/image.dart' as img;
 import 'payroll_template.dart'; // Reuses TanodPerson
 
 /// Template 4: ID Photocopy.
@@ -119,6 +120,34 @@ class IdPhotocopy {
     );
   }
 
+  // SMALLER FILE: each ID photo is re-saved as a small JPG before it goes in
+  // the PDF (the card prints 85.6 mm wide, so 640 px is still sharp at ~190 dpi).
+  // Without this a sheet of 9 tanods was several MB, over the 900 KB upload limit.
+  static const _photoMaxSide = 640;
+  static const _photoQuality = 60;
+  static final _small = Expando<Uint8List>(); // done once per photo
+
+  static Uint8List _smallPhoto(Uint8List bytes) {
+    final hit = _small[bytes];
+    if (hit != null) return hit;
+    Uint8List out = bytes;
+    try {
+      final image = img.decodeImage(bytes);
+      if (image != null) {
+        final big = image.width > image.height ? image.width : image.height;
+        final resized = big > _photoMaxSide
+            ? (image.width >= image.height
+                ? img.copyResize(image, width: _photoMaxSide)
+                : img.copyResize(image, height: _photoMaxSide))
+            : image;
+        final jpg = Uint8List.fromList(img.encodeJpg(resized, quality: _photoQuality));
+        if (jpg.length < bytes.length) out = jpg;
+      }
+    } catch (_) {}
+    _small[bytes] = out;
+    return out;
+  }
+
   static pw.Widget _card(Uint8List bytes) => pw.SizedBox(
         width: _cardWidth,
         height: _cardHeight,
@@ -128,7 +157,7 @@ class IdPhotocopy {
           horizontalRadius: _cornerRadius,
           verticalRadius: _cornerRadius,
           child: pw.Image(
-            pw.MemoryImage(bytes),
+            pw.MemoryImage(_smallPhoto(bytes)),
             width: _cardWidth,
             height: _cardHeight,
             // The flattened image already has the card's exact ratio, so this fills

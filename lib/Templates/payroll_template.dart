@@ -163,6 +163,29 @@ class TanodPerson {
   }
 }
 
+/// The officials printed at the bottom of the Payroll. The municipality can
+/// change these names (Documents → Payroll → Edit signatories).
+final Map<String, String> payrollOfficials = Map.of(kDefaultPayrollOfficials);
+
+const Map<String, String> kDefaultPayrollOfficials = {
+  'authorized': 'MARIA ALFREDA S. FAJARDO', // A. Authorized Official
+  'accounting': 'ORWEN M. ANUEVO', // B. Head of Accounting (also "Prepared by")
+  'treasury': 'JEAN MAIRE G. UMADHAY', // C. Provincial Treasurer
+  'executive': 'GOV. ARTHUR R. DEFENSOR, JR.', // D. Local Chief Executive
+  'disbursing': '', // E. Disbursing Officer
+};
+
+/// Label for each official (for the edit window).
+const Map<String, String> kPayrollOfficialRoles = {
+  'authorized': 'A. Authorized Official',
+  'accounting': 'B. Head of Accounting Division Unit',
+  'treasury': 'C. Head of Treasury (Provincial Treasurer)',
+  'executive': 'D. Local Chief Executive',
+  'disbursing': 'E. Disbursing Officer',
+};
+
+String _official(String key) => (payrollOfficials[key] ?? kDefaultPayrollOfficials[key] ?? '').trim().toUpperCase();
+
 Future<Uint8List> generatePayrollPdf({
   required List<TanodPerson> tanodList,
   // Always passed in from the account (see Templates/gawad_pdf.dart)
@@ -202,7 +225,7 @@ Future<Uint8List> generatePayrollPdf({
               pw.Text(period, style: const pw.TextStyle(fontSize: 7.5)),
               pw.SizedBox(height: 2),
               pw.Text(
-                'We hereby acknowledge to have received from JEAN MAIRE G. UMADHAY, Provincial Treasurer of Iloilo, the sum herein specified opposite our respective names, as Financial Assistance to Barangay Tanods in their services;',
+                'We hereby acknowledge to have received from ${_official('treasury')}, Provincial Treasurer of Iloilo, the sum herein specified opposite our respective names, as Financial Assistance to Barangay Tanods in their services;',
                 style: const pw.TextStyle(fontSize: 7),
               ),
               pw.SizedBox(height: 5),
@@ -319,7 +342,7 @@ Future<Uint8List> generatePayrollPdf({
                           flex: 1,
                           tag: 'A',
                           certText: 'CERTIFIED:  Services duly rendred as  stated',
-                          officialName: 'MARIA ALFREDA S. FAJARDO',
+                          officialName: _official('authorized'),
                           subTitle: 'Signature over Printed Name / Position',
                           role: 'Authorized Official',
                         ),
@@ -327,7 +350,7 @@ Future<Uint8List> generatePayrollPdf({
                           flex: 1,
                           tag: 'B',
                           certText: 'CERTIFIED: Supporting documents complete and proper',
-                          officialName: 'ORWEN M. ANUEVO',
+                          officialName: _official('accounting'),
                           subTitle: 'Signature over Printed Name',
                           role: 'Head of Accounting Division Unit',
                         ),
@@ -335,7 +358,7 @@ Future<Uint8List> generatePayrollPdf({
                           flex: 1,
                           tag: 'C',
                           certText: 'CERTIFIED: Cash available for the purpose',
-                          officialName: 'JEAN MAIRE G. UMADHAY',
+                          officialName: _official('treasury'),
                           subTitle: 'Signature over Printed Name',
                           role: 'Head of Treasury Division/Unit',
                           isLast: true,
@@ -351,7 +374,7 @@ Future<Uint8List> generatePayrollPdf({
                           flex: 1,
                           tag: 'D',
                           certText: 'APPROVED FOR PAYMENT: ',
-                          officialName: 'GOV. ARTHUR R. DEFENSOR, JR.',
+                          officialName: _official('executive'),
                           subTitle: 'Signature over Printed Name / Position',
                           role: 'Local Chied Executive',
                         ),
@@ -359,7 +382,7 @@ Future<Uint8List> generatePayrollPdf({
                           flex: 1,
                           tag: 'E',
                           certText: 'CERTIFIED: Each employee whose name appears on the payroll has been paid the',
-                          officialName: '',
+                          officialName: _official('disbursing'),
                           subTitle: 'Signature over Printed Name',
                           role: 'Disbursing Officer',
                         ),
@@ -417,7 +440,7 @@ Future<Uint8List> generatePayrollPdf({
                               pw.Column(
                                 crossAxisAlignment: pw.CrossAxisAlignment.center,
                                 children: [
-                                  pw.Text('ORWEN M. ANUEVO', style: pw.TextStyle(fontSize: 7, fontWeight: pw.FontWeight.bold)),
+                                  pw.Text(_official('accounting'), style: pw.TextStyle(fontSize: 7, fontWeight: pw.FontWeight.bold)),
                                   pw.Container(height: 0.5, width: 120, color: PdfColors.black),
                                   pw.Text('Head, Accounting Department Unit', style: const pw.TextStyle(fontSize: 6)),
                                 ],

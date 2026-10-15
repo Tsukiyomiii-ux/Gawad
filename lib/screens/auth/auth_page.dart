@@ -2,8 +2,6 @@ import 'package:flutter/material.dart';
 
 import 'package:tanod_incentives/theme.dart';
 import 'login_form.dart';
-import 'register_form.dart';
-import 'success_view.dart';
 
 class AuthPage extends StatefulWidget {
   const AuthPage({super.key});
@@ -12,17 +10,6 @@ class AuthPage extends StatefulWidget {
 }
 
 class _AuthPageState extends State<AuthPage> {
-  bool showRegister = false;
-  bool submitted = false; // registration success view
-
-  // register summary
-  String sName = '', sPos = '', sArea = '', sMuni = '';
-
-  void goTo(bool reg) => setState(() {
-        showRegister = reg;
-        if (reg) submitted = false;
-      });
-
   @override
   Widget build(BuildContext context) {
     final w = MediaQuery.of(context).size.width;
@@ -103,34 +90,8 @@ class _AuthPageState extends State<AuthPage> {
             Padding(
               padding: EdgeInsets.fromLTRB(mobile ? 18 : 40, mobile ? 20 : 28, mobile ? 18 : 40, mobile ? 26 : 34),
               child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                _Tabs(showRegister: showRegister, onChanged: goTo),
-                const SizedBox(height: 28),
-                AnimatedSwitcher(
-                  duration: const Duration(milliseconds: 200),
-                  child: showRegister
-                      ? (submitted
-                          ? SuccessView(
-                              key: const ValueKey('done'),
-                              name: sName,
-                              pos: sPos,
-                              area: sArea,
-                              muni: sMuni,
-                              onSignIn: () => goTo(false),
-                              onAgain: () => setState(() => submitted = false),
-                            )
-                          : RegisterForm(
-                              key: const ValueKey('reg'),
-                              onSignIn: () => goTo(false),
-                              onSubmitted: (n, p, a, m) => setState(() {
-                                sName = n;
-                                sPos = p;
-                                sArea = a;
-                                sMuni = m;
-                                submitted = true;
-                              }),
-                            ))
-                      : LoginForm(key: const ValueKey('login'), onRequestAccess: () => goTo(true)),
-                ),
+                // Sign in only (Request access removed: OPPDC creates every account)
+                LoginForm(key: const ValueKey('login'), onRequestAccess: () {}),
               ]),
             ),
           ]),
@@ -256,7 +217,7 @@ class _Hero extends StatelessWidget {
                     const SizedBox(height: 12),
                     ConstrainedBox(
                       constraints: const BoxConstraints(maxWidth: 480),
-                      child: Text('Sign in to your account, or request access for your barangay.',
+                      child: Text('Sign in with the account given by OPPDC.',
                           textAlign: TextAlign.center,
                           style: sans(16, color: const Color(0xFFD3E0EE), h: 1.5)),
                     ),
@@ -312,59 +273,3 @@ class _HelpPill extends StatelessWidget {
 }
 
 // ---------------- Tabs ----------------
-class _Tabs extends StatelessWidget {
-  final bool showRegister;
-  final void Function(bool reg) onChanged;
-  const _Tabs({required this.showRegister, required this.onChanged});
-
-  Widget _tab(String label, IconData icon, bool selected, VoidCallback onTap) {
-    return Expanded(
-      child: GestureDetector(
-        onTap: onTap,
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 200),
-          padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
-          decoration: BoxDecoration(
-            color: selected ? C.navy : Colors.transparent,
-            borderRadius: BorderRadius.circular(10),
-            boxShadow: selected
-                ? [
-                    BoxShadow(
-                        color: C.navy.withValues(alpha: .5),
-                        blurRadius: 12,
-                        offset: const Offset(0, 4),
-                        spreadRadius: -4)
-                  ]
-                : null,
-          ),
-          child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-            Icon(icon, size: 18, color: selected ? C.yellow : C.muted),
-            const SizedBox(width: 8),
-            Flexible(
-              child: Text(label,
-                  overflow: TextOverflow.ellipsis,
-                  style: sans(15, w: FontWeight.w600, color: selected ? Colors.white : C.muted)),
-            ),
-          ]),
-        ),
-      ),
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(5),
-      decoration: BoxDecoration(
-        color: C.mist,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: C.line),
-      ),
-      child: Row(children: [
-        _tab('Sign in', Icons.login, !showRegister, () => onChanged(false)),
-        const SizedBox(width: 6),
-        _tab('Request access', Icons.badge_outlined, showRegister, () => onChanged(true)),
-      ]),
-    );
-  }
-}

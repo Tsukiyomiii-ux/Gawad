@@ -7,6 +7,8 @@ import 'package:tanod_incentives/data/store.dart';
 import 'package:tanod_incentives/widgets/app_field.dart';
 import 'package:tanod_incentives/widgets/chat_thread.dart';
 import 'package:tanod_incentives/widgets/upload_sheet.dart';
+import 'package:tanod_incentives/widgets/paper_check.dart';
+import 'package:tanod_incentives/data/archive_service.dart'; // ARCHIVE // checks the signed copy before upload
 import 'package:tanod_incentives/widgets/id_fields.dart'; // PhilSys ID field + ID photo picker
 import 'package:tanod_incentives/widgets/notify.dart'; // top pop-ups + "Are you sure?"
 import 'package:tanod_incentives/data/cloud.dart'; // FIREBASE: live data + saving
@@ -79,11 +81,11 @@ void explain(BuildContext context, String title, String body) {
 const _stepCount = 5;
 
 String _stepName(int i) => [
-      tr('Preparing', 'Inihahanda', 'Ginahanda'),
-      tr('Shared to Municipality', 'Naibahagi sa Munisipyo', 'Napaambit sa Munisipyo'),
-      tr('Municipality Reviewing', 'Sinusuri ng Munisipyo', 'Ginausisa sang Munisipyo'),
-      tr('OPPDC Reviewing', 'Sinusuri ng OPPDC', 'Ginausisa sang OPPDC'),
-      tr('Released', 'Na-release', 'Na-release'),
+      tr('Not Started', 'Hindi pa nagsisimula', 'Wala pa nagsugod'),
+      tr('Enroute to Municipality', 'Papunta sa Munisipyo', 'Padulong sa Munisipyo'),
+      tr('Received at the Municipality', 'Natanggap ng Munisipyo', 'Nabaton sang Munisipyo'),
+      tr('Enroute to OPPDC', 'Papunta sa OPPDC', 'Padulong sa OPPDC'),
+      tr('Incentive Released', 'Na-release ang Incentive', 'Na-release ang Incentive'),
     ][i];
 
 class _Issue {
@@ -127,8 +129,14 @@ class _DashboardPageState extends State<DashboardPage> {
 
   final Set<String> resolved = {};
   int navIndex = 0;
-  bool online = false;
-  int pendingSync = 3;
+  // SYNC CHIP: real when signed in (Firebase saves not confirmed yet),
+  // a demo counter with the demo login.
+  bool _demoOnline = false;
+  int _demoPending = 3;
+  bool get online => cloud.live ? cloud.pendingWrites.value == 0 : _demoOnline;
+  set online(bool v) => _demoOnline = v;
+  int get pendingSync => cloud.live ? cloud.pendingWrites.value : _demoPending;
+  set pendingSync(int v) => _demoPending = v;
 
   // ---------- derived values ----------
   BrgyRecord get rec => store.abat;
@@ -138,10 +146,11 @@ class _DashboardPageState extends State<DashboardPage> {
 
   // Position on the 5-step tracker.
    int get stage => switch (rec.status) {
-        BrgyStatus.notStarted || BrgyStatus.preparing => 0,
-        BrgyStatus.submitted || BrgyStatus.corrections => 2, // shared; municipality reviewing
-        BrgyStatus.checked || BrgyStatus.sentToOppdc => 3, // reviewed; OPPDC next
-        BrgyStatus.released => 4,
+        BrgyStatus.notStarted || BrgyStatus.preparing => 0, // Not Started
+        BrgyStatus.submitted || BrgyStatus.corrections => 1, // Enroute to Municipality
+        BrgyStatus.checked => 2, // Received at the Municipality
+        BrgyStatus.sentToOppdc => 3, // Enroute to OPPDC
+        BrgyStatus.released => 4, // Incentive Released
       };
 
   // The list can't change while the municipality or OPPDC has the set,
@@ -151,7 +160,8 @@ class _DashboardPageState extends State<DashboardPage> {
         _ => false,
       };
 
-  bool get canSubmit => !pending && stage == 0 && rec.backupComplete && issues.isEmpty;
+  // Share opens once both signed copies are uploaded and there is at least one tanod
+  bool get canSubmit => !pending && stage == 0 && rec.backupComplete && tanods.isNotEmpty;
   bool get canSendBack => corrections && rec.toFix.isEmpty && rec.outdatedFiles.isEmpty && issues.isEmpty;
 
   List<_Issue> get issues {
@@ -249,6 +259,10 @@ class _DashboardPageState extends State<DashboardPage> {
   int _chatSeen = -1; // messages already shown (-1 = not loaded yet)
   bool _unreadAnnounced = false;
 
+  void _onSyncChange() {
+    if (mounted) setState(() {});
+  }
+
   void _onCloudChange() {
     if (!mounted) return;
     setState(() {});
@@ -297,6 +311,7 @@ class _DashboardPageState extends State<DashboardPage> {
   @override
   void dispose() {
     cloud.changes.removeListener(_onCloudChange);
+    cloud.pendingWrites.removeListener(_onSyncChange);
     cloud.errors.removeListener(_onCloudError);
     super.dispose();
   }
@@ -317,6 +332,7 @@ class _DashboardPageState extends State<DashboardPage> {
   void initState() {
     super.initState();
     cloud.changes.addListener(_onCloudChange);
+    cloud.pendingWrites.addListener(_onSyncChange); // sync chip
     cloud.errors.addListener(_onCloudError);
     // Welcome + unread messages right after signing in
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -363,6 +379,17 @@ class _DashboardPageState extends State<DashboardPage> {
       });
 
   void _sync() {
+    if (cloud.live) {
+      final n = cloud.pendingWrites.value;
+      _toast(
+          n == 0
+              ? tr('All changes are saved online.', 'Naka-save na online ang lahat ng pagbabago.', 'Naka-save na online ang tanan nga pagbag-o.')
+              : tr('$n change${n == 1 ? ' is' : 's are'} waiting for internet. They will send by themselves.',
+                  '$n pagbabago ang naghihintay ng internet. Kusa itong maipapadala.', '$n ka pagbag-o ang nagahulat sang internet. Kusa ini nga mapadala.'),
+          n == 0 ? NotifyType.success : NotifyType.warning,
+          n == 0 ? tr('Synced', 'Na-sync', 'Na-sync') : tr('Not synced yet', 'Hindi pa naka-sync', 'Wala pa na-sync'));
+      return;
+    }
     setState(() {
       online = true;
       pendingSync = 0;
@@ -375,7 +402,7 @@ class _DashboardPageState extends State<DashboardPage> {
   void _markChanged() {
     pendingSync++;
     online = false;
-    for (final f in rec.files.values) {
+    for (final f in rec.docs) {
       if (f.uploaded) f.outdated = true;
     }
     cloud.markCopiesOutdated(); // FIREBASE
@@ -398,8 +425,49 @@ class _DashboardPageState extends State<DashboardPage> {
     final wasFix = f.correction;
     final up = await showUploadSheet(context, docTitle: k.title, correction: wasFix);
     if (up == null || !mounted) return;
+
+    debugPrint('UPLOAD ${k.name}: picked ${up.name} (${up.bytes.length} bytes, pdf: ${up.isPdf})');
+
+    // PAPER CHECK: same document / template? (wrong ones are refused)
+    ({PaperCheck? check, bool retry}) result;
+    try {
+      result = await runPaperCheck(context, up, k, rec);
+    } catch (e) {
+      debugPrint('UPLOAD ${k.name}: check crashed: $e');
+      result = (check: const PaperCheck(PaperVerdict.notChecked, '', 'Not auto-checked (check failed)'), retry: false);
+    }
+    if (!mounted) return;
+    final check = result.check;
+    if (check == null) {
+      debugPrint('UPLOAD ${k.name}: stopped by the paper check (retry: ${result.retry})');
+      if (result.retry) _upload(k); // pick another file
+      return;
+    }
+
+    // FIREBASE: save online FIRST, so the screen never shows an upload the
+    // municipality can't open
+    final version = f.version + 1;
+    _busy(tr('Uploading the ${k.title}…', 'Ina-upload ang ${k.title}…', 'Gina-upload ang ${k.title}…'));
+    Object? failure;
+    try {
+      await cloud.uploadSignedCopy(k,
+          bytes: up.bytes, fileName: up.name, isPdf: up.isPdf, via: up.via, version: version, check: check.note, checkOk: check.ok);
+    } catch (e) {
+      failure = e;
+    }
+    if (mounted) Navigator.of(context, rootNavigator: true).pop(); // close "Uploading…"
+    if (!mounted) return;
+    if (failure != null) {
+      debugPrint('UPLOAD ${k.name}: FAILED: $failure');
+      final again = await _uploadFailedDialog(k, Cloud.friendly(failure));
+      if (again && mounted) _upload(k);
+      return;
+    }
+    debugPrint('UPLOAD ${k.name}: saved (version $version, live: ${cloud.live})');
+    _archiveUpload(k, up.bytes, up.isPdf); // ARCHIVE: permanent copy of the signed paper
+
     setState(() {
-      f.version++;
+      f.version = version;
       f.uploadedOn = nowLabel();
       f.via = up.via;
       // The new upload replaces the previous copy
@@ -407,6 +475,8 @@ class _DashboardPageState extends State<DashboardPage> {
       f.fileName = up.name;
       f.isPdf = up.isPdf;
       f.outdated = false;
+      f.checkNote = check.note;
+      f.checkOk = check.ok;
       if (wasFix) {
         f.correction = false;
         rec.post(
@@ -419,16 +489,130 @@ class _DashboardPageState extends State<DashboardPage> {
       pendingSync++;
       online = false;
     });
-    // FIREBASE: save the signed copy online
-    final savedOnline = await _cloud(() => cloud.uploadSignedCopy(k, bytes: up.bytes, fileName: up.name, isPdf: up.isPdf, via: up.via));
-    if (!savedOnline || !mounted) return;
+    await _uploadedDialog(k);
+    if (!mounted) return;
+    final checked = check.ok && check.message.isNotEmpty ? ' ${check.message}' : '';
     _toast(wasFix
-        ? tr('Corrected ${k.title} uploaded. Bring the corrected paper to $kMunicipality too.',
-            'Na-upload ang naitamang ${k.title}. Dalhin din ang naitamang papel sa $kMunicipality.', 'Na-upload na ang natadlong nga ${k.title}. Palihog dal-a man ang natadlong nga papel sa $kMunicipality.')
-        : tr('Signed ${k.title} uploaded. It replaces the file and is your backup.',
-            'Na-upload ang pirmadong ${k.title}. Papalitan nito ang file at ito ang inyong backup.', 'Na-upload na ang may pirma nga ${k.title}. Amo na ini ang inyo backup.'),
-        NotifyType.success, tr('Upload saved', 'Na-save ang upload', 'Na-save ang upload'));
+        ? tr('Corrected ${k.title} uploaded.$checked Bring the corrected paper to $kMunicipality too.',
+            'Na-upload ang naitamang ${k.title}.$checked Dalhin din ang naitamang papel sa $kMunicipality.', 'Na-upload na ang natadlong nga ${k.title}.$checked Palihog dal-a man ang natadlong nga papel sa $kMunicipality.')
+        : tr('Signed ${k.title} uploaded.$checked It replaces the file and is your backup.',
+            'Na-upload ang pirmadong ${k.title}.$checked Papalitan nito ang file at ito ang inyong backup.', 'Na-upload na ang may pirma nga ${k.title}.$checked Amo na ini ang inyo backup.'),
+        check.ok ? NotifyType.success : NotifyType.warning, tr('Upload saved', 'Na-save ang upload', 'Na-save ang upload'));
   }
+
+  // "Uploading…" window while the file is being saved
+  void _busy(String text) => showDialog<void>(
+        context: context,
+        barrierDismissible: false,
+        builder: (_) => PopScope(
+          canPop: false,
+          child: AlertDialog(
+            backgroundColor: Colors.white,
+            surfaceTintColor: Colors.white,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+            content: Row(children: [
+              const SizedBox(width: 30, height: 30, child: CircularProgressIndicator(strokeWidth: 3)),
+              const SizedBox(width: 18),
+              Expanded(child: Text(text, style: sans(16, w: FontWeight.w600, color: C.navy))),
+            ]),
+          ),
+        ),
+      );
+
+  // ARCHIVE: every signed Certification / ID sheet the barangay uploads is
+  // also kept as a permanent copy (archives collection). Runs in the
+  // background; a failure only shows a small warning, the upload itself is saved.
+  Future<void> _archiveUpload(DocKind k, Uint8List bytes, bool isPdf) async {
+    try {
+      final pdf = await signedCopyAsPdf(bytes, isPdf: isPdf);
+      await archive.save(
+        kind: k,
+        year: kYear,
+        municipalityId: cloud.live ? cloud.municipalityId : 'demo-${kMunicipality.toLowerCase()}',
+        municipalityName: kMunicipality,
+        barangayId: cloud.live ? cloud.barangayId : (rec.id ?? rec.name),
+        barangayName: rec.name,
+        tanodCount: tanods.length,
+        fileName: '${k.title} - Brgy ${rec.name} - $kYear - signed v${rec.files[k]!.version}.pdf',
+        pdf: pdf,
+      );
+      debugPrint('ARCHIVE ${k.name}: saved');
+    } catch (e) {
+      debugPrint('ARCHIVE ${k.name}: FAILED: $e');
+      if (mounted) {
+        _toast(tr('The upload is saved, but the archive copy wasn’t: ${Cloud.friendly(e)}',
+            'Na-save ang upload, pero hindi ang archive: ${Cloud.friendly(e)}',
+            'Na-save ang upload, pero indi ang archive: ${Cloud.friendly(e)}'), NotifyType.warning, 'Archive');
+      }
+    }
+  }
+
+  // Red X when the upload didn't go through. Returns true for "Try again".
+  Future<bool> _uploadFailedDialog(DocKind k, String reason) async {
+    final r = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: Colors.white,
+        surfaceTintColor: Colors.white,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        icon: Container(
+          width: 64,
+          height: 64,
+          decoration: const BoxDecoration(color: C.red, shape: BoxShape.circle),
+          child: const Icon(Icons.close_rounded, color: Colors.white, size: 40),
+        ),
+        title: Text(tr('Upload failed', 'Hindi na-upload', 'Wala na-upload'), textAlign: TextAlign.center,
+            style: sans(20, w: FontWeight.w700, color: C.navy)),
+        content: Text(
+            tr('The ${k.title} was NOT saved.\n\n$reason', 'HINDI na-save ang ${k.title}.\n\n$reason', 'WALA na-save ang ${k.title}.\n\n$reason'),
+            textAlign: TextAlign.center,
+            style: sans(15.5, color: C.ink, h: 1.45)),
+        actionsAlignment: MainAxisAlignment.center,
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: Text(tr('Close', 'Isara', 'Sirhan'), style: sans(15, color: C.muted))),
+          FilledButton.icon(
+            style: FilledButton.styleFrom(backgroundColor: C.navy, foregroundColor: Colors.white, minimumSize: const Size(0, 46)),
+            onPressed: () => Navigator.pop(ctx, true),
+            icon: const Icon(Icons.refresh_rounded, size: 18),
+            label: Text(tr('Try again', 'Subukan ulit', 'Tilawan liwat')),
+          ),
+        ],
+      ),
+    );
+    return r == true;
+  }
+
+  // Big green check after a successful upload
+  Future<void> _uploadedDialog(DocKind k) => showDialog<void>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          backgroundColor: Colors.white,
+          surfaceTintColor: Colors.white,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          icon: Container(
+            width: 64,
+            height: 64,
+            decoration: const BoxDecoration(color: C.green, shape: BoxShape.circle),
+            child: const Icon(Icons.check_rounded, color: Colors.white, size: 40),
+          ),
+          title: Text(tr('Uploaded!', 'Na-upload na!', 'Na-upload na!'), textAlign: TextAlign.center,
+              style: sans(20, w: FontWeight.w700, color: C.navy)),
+          content: Text(
+              tr('The ${k.title} was saved successfully. You can see the green check on its card in Documents.',
+                  'Matagumpay na na-save ang ${k.title}. Makikita ang berdeng tsek sa card nito sa Documents.',
+                  'Malampuson nga na-save ang ${k.title}. Makita ang berde nga tsek sa card sini sa Documents.'),
+              textAlign: TextAlign.center,
+              style: sans(15.5, color: C.ink, h: 1.45)),
+          actionsAlignment: MainAxisAlignment.center,
+          actions: [
+            FilledButton(
+              style: FilledButton.styleFrom(backgroundColor: C.green, foregroundColor: Colors.white, minimumSize: const Size(140, 46)),
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('OK'),
+            ),
+          ],
+        ),
+      );
 
   Future<void> _scanId() async {
     if (locked) {
@@ -617,11 +801,11 @@ class _DashboardPageState extends State<DashboardPage> {
    Future<void> _submit() async {
     final ok = await _confirm(
       tr('Share to Municipality?', 'Ibahagi sa Munisipyo?', 'Ipaambit sa Munisipyo?'),
-      tr('The Municipality will be able to open the softcopies of all 4 documents. Then bring the signed paper set to the '
+      tr('The Municipality will be able to open the softcopies of your signed documents. Then bring the signed paper set to the '
               'MLGOO office; the reviewer checks the paper and will message you here if anything needs fixing.',
-          'Mabubuksan ng Munisipyo ang softcopy ng 4 na dokumento. Saka dalhin ang pirmadong papel sa tanggapan ng MLGOO; '
+          'Mabubuksan ng Munisipyo ang softcopy ng pirmadong dokumento. Saka dalhin ang pirmadong papel sa tanggapan ng MLGOO; '
               'susuriin ng reviewer ang papel at magme-message dito kung may kailangang ayusin.',
-          'Mabuksan sang Munisipyo ang softcopy sang 4 ka dokumento. Dayon dal-a ang may pirma nga papel sa opisina sang MLGOO; '
+          'Mabuksan sang Munisipyo ang softcopy sang may pirma nga dokumento. Dayon dal-a ang may pirma nga papel sa opisina sang MLGOO; '
               'usisaon sang reviewer ang papel kag magmensahe diri kon may kinahanglan tadlungon.'),
       tr('Share', 'Ibahagi', 'Ipaambit'),
     );
@@ -895,8 +1079,6 @@ class _DashboardPageState extends State<DashboardPage> {
           gap,
           _messagesPreview(),
         ],
-        gap,
-        _submitPanel(),
       ]);
     });
   }
@@ -940,8 +1122,8 @@ class _DashboardPageState extends State<DashboardPage> {
 
     final unconfirmed = [for (var i = 0; i < tanods.length; i++) if (!tanods[i].confirmed) i];
     final lookAlikes = issues.where((x) => x.id.startsWith('dup-')).toList();
-    final notDone = rec.files.values.where((f) => !f.done).toList();
-    final steps = [tanods.isNotEmpty, unconfirmed.isEmpty, lookAlikes.isEmpty, for (final f in rec.files.values) f.done];
+    final notDone = rec.docs.where((f) => !f.done).toList();
+    final steps = [tanods.isNotEmpty, unconfirmed.isEmpty, lookAlikes.isEmpty, for (final f in rec.docs) f.done];
     final done = steps.where((x) => x).length;
 
     var icon = Icons.flag_outlined;
@@ -1011,9 +1193,9 @@ class _DashboardPageState extends State<DashboardPage> {
       icon = Icons.send_outlined;
                   title = tr('Share to Municipality and bring the paper set', 'Ibahagi sa Munisipyo at dalhin ang papel',
           'Ipaambit sa Munisipyo kag dal-a ang papel');
-      body = tr('All four signed copies are uploaded. Share them so the Municipality can open the softcopies, then bring the signed papers to the MLGOO office.',
-          'Na-upload na ang apat na pirmadong kopya. Ibahagi para mabuksan ng Munisipyo ang softcopy, saka dalhin ang pirmadong papel sa tanggapan ng MLGOO.',
-          'Na-upload na ang apat ka may pirma nga kopya. Ipaambit para mabuksan sang Munisipyo ang softcopy, dayon dal-a ang may pirma nga papel sa opisina sang MLGOO.');
+      body = tr('Both signed copies are uploaded. Share them so the Municipality can open the softcopies, then bring the signed papers to the MLGOO office.',
+          'Na-upload na ang dalawang pirmadong kopya. Ibahagi para mabuksan ng Munisipyo ang softcopy, saka dalhin ang pirmadong papel sa tanggapan ng MLGOO.',
+          'Na-upload na ang duha ka may pirma nga kopya. Ipaambit para mabuksan sang Munisipyo ang softcopy, dayon dal-a ang may pirma nga papel sa opisina sang MLGOO.');
       actions = [_bigButton(tr('Share to Municipality', 'Ibahagi sa Munisipyo', 'Ipaambit sa Munisipyo'), Icons.share_outlined, _submit)];
     }
 
@@ -1332,7 +1514,7 @@ class _DashboardPageState extends State<DashboardPage> {
   // The municipality found mistakes on the paper copy.
   Widget _correctionsBanner() {
     const red = Color(0xFF8E2A22);
-    final asked = [for (final f in rec.files.values) if (rec.lastAbout(f.kind) != null && (f.correction || f.version > 1)) f];
+    final asked = [for (final f in rec.docs) if (rec.lastAbout(f.kind) != null && (f.correction || f.version > 1)) f];
     return Container(
       decoration: BoxDecoration(
         color: const Color(0xFFFDF0EE),
@@ -1454,7 +1636,7 @@ class _DashboardPageState extends State<DashboardPage> {
           'Humiling ng pagtatama ang Munisipyo. Bukas ang pag-edit at pag-upload hanggang maipasa ulit.',
           'Nagpangayo sang pagtadlong ang Munisipyo. Bukas ang pag-edit kag pag-upload tubtob mapasa liwat.'),
       BrgyStatus.checked => tr(
-          'Reviewed by the Municipality. It will bring all barangays’ paper sets to OPPDC together.',
+          'Received at the Municipality. It will bring all barangays’ paper sets to OPPDC together.',
           'Nasuri na ng Munisipyo. Sabay-sabay nitong dadalhin sa OPPDC ang papel ng lahat ng barangay.',
           'Nausisa na sang Munisipyo. Dungan nga dal-on sini sa OPPDC ang papel sang tanan nga barangay.'),
       BrgyStatus.sentToOppdc => tr(
@@ -1467,33 +1649,26 @@ class _DashboardPageState extends State<DashboardPage> {
         ? (tr('Awaiting approval', 'Hinihintay ang apruba', 'Ginahulat ang pag-aprobar'), const Color(0xFFFFF4CC), const Color(0xFF7A5B00))
         : switch (rec.status) {
             BrgyStatus.corrections => (tr('Corrections requested', 'May itatama', 'May tadlungon'), const Color(0xFFFDF0EE), C.red),
-            BrgyStatus.checked => (
-                tr('Reviewed by Municipality', 'Nasuri ng Munisipyo', 'Nausisa sang Munisipyo'),
-                C.greenSoft,
-                const Color(0xFF14583D)
-              ),
-            BrgyStatus.released => (tr('Released', 'Na-release', 'Na-release'), C.greenSoft, const Color(0xFF14583D)),
+            BrgyStatus.checked => (_stepName(2), C.greenSoft, const Color(0xFF14583D)),
+            BrgyStatus.released => (_stepName(4), C.greenSoft, const Color(0xFF14583D)),
             _ => (_stepName(stage), const Color(0xFFFFF4CC), const Color(0xFF7A5B00)),
           };
     return _Panel(
       title: tr('Submission status', 'Kalagayan ng pagpasa', 'Kahimtangan sang pagpasa'),
       icon: Icons.route_outlined,
       help: tr(
-          'Preparing: you complete the documents and upload the signed copies. Shared to Municipality: the Municipality can '
-              'open the softcopies of all your documents, and you bring the paper set. Municipality Reviewing: the reviewer '
-              'checks the paper and messages you about any mistake. OPPDC Reviewing: the Municipality brings every barangay’s '
-              'paper set to OPPDC together. Released: the incentive is paid out.',
-          'Inihahanda: kinukumpleto ninyo ang dokumento at ina-upload ang pirmadong kopya. Naibahagi sa Munisipyo: mabubuksan '
-              'ng Munisipyo ang softcopy ng lahat ng dokumento, at dadalhin ninyo ang papel. Sinusuri ng Munisipyo: susuriin ang '
-              'papel at magme-message kung may mali. Sinusuri ng OPPDC: sabay-sabay na dadalhin ng Munisipyo sa OPPDC ang papel ng '
-              'lahat ng barangay. Na-release: naibigay na ang incentive.',
-          'Ginahanda: ginakompleto ninyo ang dokumento kag ginaupload ang may pirma nga kopya. Napaambit sa Munisipyo: mabuksan '
-              'sang Munisipyo ang softcopy sang tanan ninyo nga dokumento, kag dal-on ninyo ang papel. Ginausisa sang Munisipyo: '
-              'usisaon sang reviewer ang papel kag magmensahe kon may sala. Ginausisa sang OPPDC: dungan nga dal-on sang Munisipyo '
-              'sa OPPDC ang papel sang tanan nga barangay. Na-release: naihatag na ang incentive.'),
+          'Not Started: you complete the documents and upload the signed copies. Enroute to Municipality: you pressed Share and '
+              'the paper set is on its way. Received at the Municipality: the Municipality received your signed papers. '
+              'Enroute to OPPDC: the Municipality brings every barangay’s paper set to OPPDC. Incentive Released: the incentive is paid out.',
+          'Hindi pa nagsisimula: kinukumpleto ninyo ang dokumento at ina-upload ang pirmadong kopya. Papunta sa Munisipyo: naibahagi '
+              'na at papunta na ang papel. Natanggap ng Munisipyo: natanggap na ang pirmadong papel. Papunta sa OPPDC: dadalhin ng '
+              'Munisipyo sa OPPDC ang papel ng lahat ng barangay. Na-release ang Incentive: naibigay na ang incentive.',
+          'Wala pa nagsugod: ginakompleto ninyo ang dokumento kag ginaupload ang may pirma nga kopya. Padulong sa Munisipyo: napaambit '
+              'na kag padulong na ang papel. Nabaton sang Munisipyo: nabaton na ang may pirma nga papel. Padulong sa OPPDC: dal-on sang '
+              'Munisipyo sa OPPDC ang papel sang tanan nga barangay. Na-release ang Incentive: naihatag na ang incentive.'),
       trailing: _pill(pillText, pillBg, pillFg),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        _StatusTracker(current: stage, correctionsAt: corrections ? 2 : null),
+        _StatusTracker(current: stage, correctionsAt: corrections ? 1 : null),
         const SizedBox(height: 16),
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
@@ -1656,14 +1831,14 @@ class _DashboardPageState extends State<DashboardPage> {
               'copy. $kMunicipality checks the paper you bring; it and OPPDC can open these backups any time.',
           'Kapag napirmahan na ang papel, i-upload ang litrato o scan nito. Papalitan nito ang file sa Gawad at ito ang backup. '
               'Ang papel na dala ninyo ang susuriin ng $kMunicipality; mabubuksan nito at ng OPPDC ang backup anumang oras.', 'Pagkatapos mapirmahan ang papel, palihog i-upload ang litrato ukon scan sini. Ilisan sini ang file sa Gawad kag amo ini ang backup ' 'nga kopya. Usisaon sang $kMunicipality ang papel nga dal-on ninyo; mabuksan nila kag sang OPPDC ining backup bisan san-o.'),
-      trailing: Text(tr('${rec.backupCount} of 4 done', '${rec.backupCount} sa 4 tapos', '${rec.backupCount} sa 4 tapos na'),
+      trailing: Text(tr('${rec.backupCount} of ${kBarangayDocs.length} done', '${rec.backupCount} sa ${kBarangayDocs.length} tapos', '${rec.backupCount} sa ${kBarangayDocs.length} tapos na'),
           style: sans(14.5, w: FontWeight.w600, color: C.muted)),
       child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
         Text(tr('Download → print → sign → upload a photo. Each upload is your backup of the signed paper.',
                 'I-download → i-print → papirmahan → i-upload ang litrato. Ang bawat upload ang backup ng pirmadong papel.', 'I-download → i-print → papirmahi → i-upload ang litrato. Ang kada upload amo ang inyo backup sang may pirma nga papel.'),
             style: sans(14.5, color: C.muted, h: 1.5)),
         const SizedBox(height: 16),
-        for (final f in rec.files.values) ...[_backupRow(f), const SizedBox(height: 10)],
+        for (final f in rec.docs) ...[_backupRow(f), const SizedBox(height: 10)],
       ]),
     );
   }
@@ -2081,7 +2256,7 @@ class _DashboardPageState extends State<DashboardPage> {
     final middle = TextEditingController(text: t.middle);
     final last = TextEditingController(text: t.last);
     final formKey = GlobalKey<FormState>();
-    final signedAlready = rec.files.values.any((f) => f.uploaded);
+    final signedAlready = rec.docs.any((f) => f.uploaded);
     Uint8List? newFront = t.idFront, newBack = t.idBack;
     var photosChanged = false;
 
@@ -2269,7 +2444,7 @@ class _DashboardPageState extends State<DashboardPage> {
   }
 
   Widget _submitPanel() {
-    final missing = 4 - rec.backupCount;
+    final missing = kBarangayDocs.length - rec.backupCount;
     final alertCount = issues.length + rec.outdatedFiles.length;
     final reasons = <String>[
       if (missing > 0)
@@ -2330,13 +2505,13 @@ class _DashboardPageState extends State<DashboardPage> {
       label = tr('Shared', 'Naibahagi na', 'Napaambit na');
       buttonIcon = Icons.check;
     } else if (canSubmit) {
-      title = tr('Ready to share', 'Handa nang ibahagi', 'Handa na ipaambit');
+      title = tr('Are you sure you want to share?', 'Sigurado ka bang ibabahagi na?', 'Sigurado ka bala nga ipaambit na?');
       body = tr('All signed copies are uploaded. Share them so the Municipality can open the softcopies, then bring the signed paper set.',
           'Na-upload na ang lahat ng pirmadong kopya. Ibahagi para mabuksan ng Munisipyo ang softcopy, saka dalhin ang pirmadong papel.',
           'Na-upload na ang tanan nga may pirma nga kopya. Ipaambit para mabuksan sang Munisipyo ang softcopy, dayon dal-a ang may pirma nga papel.');
       onPressed = _submit;
     } else {
-      title = tr('Not ready to share yet', 'Hindi pa handang ibahagi', 'Indi pa handa ipaambit');
+      title = tr('Are you sure you want to share?', 'Sigurado ka bang ibabahagi na?', 'Sigurado ka bala nga ipaambit na?');
       body = '${reasons.join(and)}.';
     }
 

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:tanod_incentives/screens/archive/archive_page.dart'; // ARCHIVE
 
 import 'package:tanod_incentives/theme.dart';
 import 'package:tanod_incentives/data/demo_data.dart';
@@ -7,6 +8,7 @@ import 'package:tanod_incentives/data/store.dart';
 import 'package:tanod_incentives/widgets/ui.dart';
 import 'package:tanod_incentives/screens/auth/auth_page.dart';
 import 'package:tanod_incentives/screens/municipal/check_page.dart';
+import 'package:tanod_incentives/screens/municipal/muni_docs_page.dart'; // a barangay's 4 documents
 import 'package:tanod_incentives/data/cloud.dart'; // FIREBASE: live barangays + saving
 
 // Municipality (MLGOO / municipal reviewer) dashboard, in English, Filipino
@@ -33,13 +35,14 @@ const _nav = [
   _Nav(Icons.space_dashboard_outlined, Icons.space_dashboard, 'Overview', 'Buod', 'Sumaryo'),
   _Nav(Icons.holiday_village_outlined, Icons.holiday_village, 'Barangays', 'Mga Barangay', 'Mga Barangay'),
   _Nav(Icons.chat_bubble_outline_rounded, Icons.chat_bubble_rounded, 'Messages', 'Mga Mensahe', 'Mga Mensahe'),
-  _Nav(Icons.how_to_reg_outlined, Icons.how_to_reg, 'Account requests', 'Mga hiling na account', 'Mga hangyo sa account'),
+  _Nav(Icons.folder_copy_outlined, Icons.folder_copy, 'Documents', 'Mga Dokumento', 'Mga Dokumento'),
   _Nav(Icons.person_outline, Icons.person, 'Account', 'Account', 'Account'),
 ];
 
 const _messagesTab = 2;
-const _requestsTab = 3;
+const _docsTab = 3; // every barangay's 4 documents
 const _accountTab = 4;
+const _requestsTab = 5; // account requests: no tab, opened from "Needs your attention"
 
 String _reviewerRole() => tr('Municipal reviewer (MLGOO)', 'Municipal reviewer (MLGOO)', 'Municipal reviewer (MLGOO)');
 
@@ -51,7 +54,7 @@ class _MunicipalPageState extends State<MunicipalPage> {
   // ---------- derived ----------
   List<BrgyRecord> get brgys => store.brgys;
   List<AccountRequest> get requests => store.requests;
-  List<BrgyRecord> by(BrgyStatus s) => brgys.where((b) => b.status == s).toList();
+  List<BrgyRecord> by(BrgyStatus s) => brgys.where((b) => muniStage(b.status) == muniStage(s)).toList();
   List<BrgyRecord> get notChecked =>
       brgys.where((b) => b.status != BrgyStatus.checked && b.status != BrgyStatus.sentToOppdc && b.status != BrgyStatus.released).toList();
   int get checkedCount => brgys.length - notChecked.length;
@@ -397,6 +400,7 @@ class _MunicipalPageState extends State<MunicipalPage> {
     final page = switch (navIndex) {
       1 => _barangaysPage(),
       _messagesTab => _messagesPage(),
+      _docsTab => _docsPage(),
       _requestsTab => _requestsPage(),
       _accountTab => _accountPage(),
       _ => _overviewPage(),
@@ -415,7 +419,7 @@ class _MunicipalPageState extends State<MunicipalPage> {
       backgroundColor: C.mist,
       body: SafeArea(child: Column(children: [_topBar(false), Expanded(child: page)])),
       bottomNavigationBar: NavigationBar(
-        selectedIndex: navIndex,
+        selectedIndex: navIndex < _nav.length ? navIndex : 0,
         onDestinationSelected: _go,
         backgroundColor: Colors.white,
         surfaceTintColor: Colors.white,
@@ -426,14 +430,14 @@ class _MunicipalPageState extends State<MunicipalPage> {
             NavigationDestination(
               icon: _badge(i, Icon(_nav[i].icon)),
               selectedIcon: _badge(i, Icon(_nav[i].activeIcon, color: C.navy)),
-              label: i == _requestsTab ? tr('Requests', 'Hiling', 'Hangyo') : _nav[i].label,
+              label: _nav[i].label,
             ),
         ],
       ),
     );
   }
 
-  int _count(int i) => i == _requestsTab ? requests.length : (i == _messagesTab ? unreadTotal : 0);
+  int _count(int i) => i == _docsTab ? by(BrgyStatus.submitted).length : (i == _messagesTab ? unreadTotal : 0);
 
   Widget _badge(int i, Widget icon) => _count(i) > 0 ? Badge(label: Text('${_count(i)}'), child: icon) : icon;
 
@@ -722,7 +726,7 @@ class _MunicipalPageState extends State<MunicipalPage> {
   Widget _attention() {
     final toCheck = by(BrgyStatus.submitted);
     final late = brgys.where((b) => b.status == BrgyStatus.notStarted || b.status == BrgyStatus.preparing).toList();
-    final fixing = by(BrgyStatus.corrections);
+    final fixing = <BrgyRecord>[]; // no separate "fixing" stage on this side any more
 
     Widget task({
       required IconData icon,
@@ -786,15 +790,16 @@ class _MunicipalPageState extends State<MunicipalPage> {
         task(
           icon: Icons.fact_check_outlined,
           tint: C.yellowDark,
-          title: tr('Check the paper set of Brgy. ${b.name}', 'Suriin ang papel ng Brgy. ${b.name}', 'Usisaa ang papel sang Brgy. ${b.name}'),
-          body: tr('${b.tanods.length} tanods · updated ${b.updated}. Go through the paper they brought, one document at a time.',
-              '${b.tanods.length} tanod · na-update ${b.updated}. Isa-isahin ang papel na dinala nila.',
-              '${b.tanods.length} ka tanod · na-update ${b.updated}. Isa-isaha ang papel nga gindala nila.'),
+          title: tr('Documents on the way from Brgy. ${b.name}', 'Papunta na ang dokumento ng Brgy. ${b.name}',
+              'Padulong na ang dokumento sang Brgy. ${b.name}'),
+          body: tr('${b.tanods.length} tanods · shared ${b.updated}. Press Receive when the signed papers arrive at your office.',
+              '${b.tanods.length} tanod · naibahagi ${b.updated}. Pindutin ang Tanggapin kapag dumating na ang pirmadong papel.',
+              '${b.tanods.length} ka tanod · napaambit ${b.updated}. Pinduta ang Batunon kon nag-abot na ang may pirma nga papel.'),
           action: FilledButton.icon(
-            style: primaryStyle(),
-            onPressed: () => _open(b),
-            icon: const Icon(Icons.arrow_forward_rounded, size: 19),
-            label: Text(tr('Check paper', 'Suriin', 'Usisaa')),
+            style: primaryStyle(bg: C.green, fg: Colors.white),
+            onPressed: () => _receive(b),
+            icon: const Icon(Icons.move_to_inbox_rounded, size: 19),
+            label: Text(tr('Receive', 'Tanggapin', 'Batunon')),
           ),
         ),
       if (unreadTotal > 0)
@@ -907,45 +912,29 @@ class _MunicipalPageState extends State<MunicipalPage> {
   // 5 tiles, one per stage. Colours match the "Where every barangay is" bar below.
   Widget _stats() {
     final n = brgys.length;
-    final preparing = by(BrgyStatus.preparing).length;
-    final toCheck = by(BrgyStatus.submitted).length;
-    final fixing = by(BrgyStatus.corrections).length;
+    final onTheWay = by(BrgyStatus.submitted).length;
     final notStarted = by(BrgyStatus.notStarted).length;
-    return Grid(maxCols: 5, minWidth: 190, children: [
+    return Grid(maxCols: 3, minWidth: 220, children: [
       StatTile(
         icon: Icons.verified_outlined,
         tint: statusBar(BrgyStatus.checked),
         value: '$checkedCount / $n',
-        label: tr('Barangays checked', 'Nasuring barangay', 'Nausisa nga barangay'),
-        note: tr('Paper set complete and correct', 'Kumpleto at tama ang papel', 'Kompleto kag husto ang papel'),
+        label: tr('Barangays complete', 'Kumpletong barangay', 'Kompleto nga barangay'),
+        note: tr('Documents received', 'Natanggap na ang dokumento', 'Nabaton na ang dokumento'),
         progress: n == 0 ? 0 : checkedCount / n,
         onView: () => _viewStatus(BrgyStatus.checked),
       ),
       StatTile(
-        icon: Icons.edit_note_rounded,
-        tint: statusBar(BrgyStatus.preparing),
-        value: '$preparing',
-        label: tr('Preparing', 'Naghahanda', 'Nagahanda'),
-        note: tr('Still filling in their documents', 'Inihahanda pa ang dokumento', 'Ginahanda pa ang dokumento'),
-        onView: () => _viewStatus(BrgyStatus.preparing),
-      ),
-      StatTile(
-        icon: Icons.fact_check_outlined,
+        icon: Icons.local_shipping_outlined,
         tint: statusBar(BrgyStatus.submitted),
-        value: '$toCheck',
-        label: tr('Paper sets to check', 'Papel na susuriin', 'Papel nga usisaon'),
-        note: toCheck == 0
-            ? tr('All caught up', 'Wala nang naghihintay', 'Wala na sang nagahulat')
-            : tr('Waiting at your office', 'Naghihintay sa opisina', 'Nagahulat sa opisina'),
+        value: '$onTheWay',
+        label: tr('Documents on the way', 'Papunta na ang dokumento', 'Padulong na ang dokumento'),
+        note: onTheWay == 0
+            ? tr('Nothing shared yet', 'Wala pang naibahagi', 'Wala pa sang napaambit')
+            : tr('Shared by the barangay. Press Receive when the papers arrive.',
+                'Naibahagi ng barangay. Pindutin ang Tanggapin pagdating ng papel.',
+                'Napaambit sang barangay. Pinduta ang Batunon kon mag-abot ang papel.'),
         onView: () => _viewStatus(BrgyStatus.submitted),
-      ),
-      StatTile(
-        icon: Icons.assignment_return_outlined,
-        tint: statusBar(BrgyStatus.corrections),
-        value: '$fixing',
-        label: tr('Fixing corrections', 'Nagtatama', 'Nagatadlong'),
-        note: tr('Barangay is correcting the paper', 'Itinatama ng barangay ang papel', 'Ginatadlong sang barangay ang papel'),
-        onView: () => _viewStatus(BrgyStatus.corrections),
       ),
       StatTile(
         icon: Icons.hourglass_empty_rounded,
@@ -960,14 +949,7 @@ class _MunicipalPageState extends State<MunicipalPage> {
 
   // Compact "line" version: title + bar on one row, small legend underneath
   Widget _progressBoard() {
-    final order = [
-      BrgyStatus.sentToOppdc,
-      BrgyStatus.checked,
-      BrgyStatus.submitted,
-      BrgyStatus.corrections,
-      BrgyStatus.preparing,
-      BrgyStatus.notStarted,
-    ];
+    final order = [BrgyStatus.checked, BrgyStatus.submitted, BrgyStatus.notStarted];
     final bar = ClipRRect(
       borderRadius: BorderRadius.circular(99),
       child: SizedBox(
@@ -1047,13 +1029,14 @@ class _MunicipalPageState extends State<MunicipalPage> {
   }
 
   Widget _statusPill(BrgyRecord b) {
-    final (bg, fg) = statusColors(b.status);
-    return pill(statusLabel(b.status), bg, fg);
+    final g = muniStage(b.status);
+    final (bg, fg) = statusColors(g);
+    return pill(statusLabel(g), bg, fg);
   }
 
   // Four squares, one per document: green done, red correction, yellow out of date, grey none.
   Widget _dots(BrgyRecord b) => Row(mainAxisSize: MainAxisSize.min, children: [
-        for (final k in DocKind.values)
+        for (final k in kBarangayDocs)
           Tooltip(
             message: k.title,
             child: Container(
@@ -1073,29 +1056,133 @@ class _MunicipalPageState extends State<MunicipalPage> {
             ),
           ),
         const SizedBox(width: 4),
-        Text('${b.backupCount}/4', style: sans(14.5, color: C.muted)),
+        Text('${b.backupCount}/${kBarangayDocs.length}', style: sans(14.5, color: C.muted)),
       ]);
 
+  // Each barangay: Remind (not shared yet) and Receive (documents on the way)
   Widget _action(BrgyRecord b) {
-    const size = WidgetStatePropertyAll(Size(140, 46));
-    return switch (b.status) {
-      BrgyStatus.submitted => FilledButton(
-          style: primaryStyle().copyWith(minimumSize: size),
-          onPressed: () => _open(b),
-          child: Text(tr('Check paper', 'Suriin', 'Usisaa')),
-        ),
-      BrgyStatus.notStarted || BrgyStatus.preparing => OutlinedButton.icon(
+    const size = WidgetStatePropertyAll(Size(140, 42));
+    final complete = !notChecked.contains(b);
+    if (complete) {
+      return OutlinedButton.icon(
+        style: outlineStyle().copyWith(minimumSize: size),
+        onPressed: () => _openDocs(b),
+        icon: const Icon(Icons.folder_open_outlined, size: 18),
+        label: Text(tr('Documents', 'Dokumento', 'Dokumento')),
+      );
+    }
+    final onTheWay = b.status == BrgyStatus.submitted;
+    return Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.end, children: [
+      if (!onTheWay)
+        OutlinedButton.icon(
           style: outlineStyle().copyWith(minimumSize: size),
           onPressed: () => _remind([b]),
           icon: const Icon(Icons.notifications_none_rounded, size: 18),
           label: Text(tr('Remind', 'Paalalahanan', 'Pahanumdumi')),
         ),
-      _ => OutlinedButton(
-          style: outlineStyle().copyWith(minimumSize: size),
-          onPressed: () => _open(b),
-          child: Text(tr('Open', 'Buksan', 'Buksan')),
+      if (!onTheWay) const SizedBox(height: 6),
+      FilledButton.icon(
+        style: primaryStyle(bg: C.green, fg: Colors.white).copyWith(minimumSize: size),
+        onPressed: onTheWay ? () => _receive(b) : null,
+        icon: const Icon(Icons.move_to_inbox_rounded, size: 18),
+        label: Text(tr('Receive', 'Tanggapin', 'Batunon')),
+      ),
+    ]);
+  }
+
+  /// The barangay's signed papers arrived: it becomes "Complete".
+  Future<void> _receive(BrgyRecord b) async {
+    final ok = await confirmAction(
+      context,
+      title: tr('Receive the documents of Brgy. ${b.name}?', 'Tanggapin ang dokumento ng Brgy. ${b.name}?',
+          'Batunon ang dokumento sang Brgy. ${b.name}?'),
+      message: tr('Confirm that the signed papers of Brgy. ${b.name} arrived at your office. The barangay will be marked Complete.',
+          'Kumpirmahin na dumating na sa opisina ang pirmadong papel ng Brgy. ${b.name}. Mamarkahan itong Kumpleto.',
+          'Kumpirmaha nga nag-abot na sa opisina ang may pirma nga papel sang Brgy. ${b.name}. Markahan ini nga Kompleto.'),
+      confirmLabel: tr('Receive', 'Tanggapin', 'Batunon'),
+      icon: Icons.move_to_inbox_rounded,
+    );
+    if (!ok || !mounted) return;
+    if (!await _cloud(() => cloud.markChecked(b)) || !mounted) return; // FIREBASE: verified
+    setState(() {
+      b.status = BrgyStatus.checked;
+      if (!cloud.isMunicipal) b.post(fromMunicipality: true, system: true, text: 'Documents received. Thank you!');
+    });
+    toast(context, tr('Brgy. ${b.name} is complete.', 'Kumpleto na ang Brgy. ${b.name}.', 'Kompleto na ang Brgy. ${b.name}.'),
+        title: tr('Documents received', 'Natanggap ang dokumento', 'Nabaton ang dokumento'));
+  }
+
+  Future<void> _openDocs(BrgyRecord b) async {
+    await Navigator.of(context).push(MaterialPageRoute(builder: (_) => MuniDocsPage(rec: b)));
+    if (mounted) setState(() {});
+  }
+
+  // ================= Documents tab =================
+  Widget _docsPage() {
+    final order = [
+      ...by(BrgyStatus.submitted),
+      ...brgys.where((b) => !notChecked.contains(b)),
+      ...brgys.where((b) => notChecked.contains(b) && b.status != BrgyStatus.submitted),
+    ];
+    return _scroll([
+      Row(children: [
+        Expanded(child: Text(tr('Documents', 'Mga Dokumento', 'Mga Dokumento'), style: serif(28))),
+        FilledButton.icon(
+          style: FilledButton.styleFrom(backgroundColor: C.navy, foregroundColor: Colors.white, minimumSize: const Size(0, 46)),
+          onPressed: () => Navigator.of(context).push(MaterialPageRoute(
+              builder: (_) => ArchivePage(municipalityId: archiveMuniId(kMunicipality), title: 'Municipality of $kMunicipality'))),
+          icon: const Icon(Icons.inventory_2_outlined, size: 18),
+          label: Text(tr('Open archive', 'Buksan ang archive', 'Buksan ang archive')),
         ),
-    };
+      ]),
+      const SizedBox(height: 6),
+      Text(
+          tr('One Payroll and one Masterlist for all of $kMunicipality, made from every barangay’s tanod list in the database. '
+                  'Each barangay’s Certification and ID photocopy sheet are inside its folder below.',
+              'Iisang Payroll at Masterlist para sa buong $kMunicipality, mula sa listahan ng bawat barangay. '
+                  'Nasa folder ng bawat barangay ang Certification at ID photocopy sheet nito.',
+              'Isa ka Payroll kag Masterlist para sa bug-os nga $kMunicipality, halin sa listahan sang kada barangay. '
+                  'Ara sa folder sang kada barangay ang Certification kag ID photocopy sheet sini.'),
+          style: sans(15.5, color: C.muted, h: 1.5)),
+      const SizedBox(height: 18),
+      const MunicipalDocs(), // ONE Payroll + ONE Masterlist
+      const SizedBox(height: 24),
+      Text(tr('Per barangay: Certification & ID photocopy sheet', 'Bawat barangay: Certification at ID photocopy sheet',
+              'Kada barangay: Certification kag ID photocopy sheet'),
+          style: sans(18, w: FontWeight.w700, color: C.navy)),
+      const SizedBox(height: 10),
+      Panel(
+        child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          for (final b in order)
+            Container(
+              padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 4),
+              decoration: const BoxDecoration(border: Border(bottom: BorderSide(color: Color(0xFFE9EFF5)))),
+              child: Row(children: [
+                const Icon(Icons.folder_outlined, color: C.navy),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    Text('Brgy. ${b.name}', style: sans(16.5, w: FontWeight.w700, color: C.navy)),
+                    const SizedBox(height: 4),
+                    Wrap(spacing: 10, runSpacing: 4, crossAxisAlignment: WrapCrossAlignment.center, children: [
+                      _statusPill(b),
+                      Text(tr('${b.tanods.length} tanods', '${b.tanods.length} tanod', '${b.tanods.length} ka tanod'),
+                          style: sans(14, color: C.muted)),
+                    ]),
+                  ]),
+                ),
+                const SizedBox(width: 10),
+                OutlinedButton.icon(
+                  style: outlineStyle(),
+                  onPressed: b.tanods.isEmpty ? null : () => _openDocs(b),
+                  icon: const Icon(Icons.folder_open_outlined, size: 18),
+                  label: Text(tr('Open', 'Buksan', 'Buksan')),
+                ),
+              ]),
+            ),
+        ]),
+      ),
+    ]);
   }
 
   Widget _unread(BrgyRecord b) => b.unreadMuni == 0
@@ -1180,7 +1267,7 @@ class _MunicipalPageState extends State<MunicipalPage> {
   Widget _barangaysPage() {
     final q = search.toLowerCase();
     final list = brgys
-        .where((b) => filter == null || b.status == filter)
+        .where((b) => filter == null || muniStage(b.status) == filter)
         .where((b) => q.isEmpty || b.name.toLowerCase().contains(q) || b.rep.toLowerCase().contains(q))
         .toList();
 
@@ -1215,12 +1302,9 @@ class _MunicipalPageState extends State<MunicipalPage> {
       const SizedBox(height: 14),
       Wrap(spacing: 8, runSpacing: 8, children: [
         chip(null),
-        chip(BrgyStatus.submitted),
-        chip(BrgyStatus.corrections),
-        chip(BrgyStatus.preparing),
-        chip(BrgyStatus.notStarted),
         chip(BrgyStatus.checked),
-        chip(BrgyStatus.sentToOppdc),
+        chip(BrgyStatus.submitted),
+        chip(BrgyStatus.notStarted),
       ]),
       const SizedBox(height: 18),
       _barangayTable(list),

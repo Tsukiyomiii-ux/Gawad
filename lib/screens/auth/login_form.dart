@@ -5,6 +5,8 @@ import 'package:tanod_incentives/widgets/app_field.dart';
 import 'package:tanod_incentives/widgets/yellow_button.dart';
 import 'package:tanod_incentives/screens/dashboard/dashboard_page.dart';
 import 'package:tanod_incentives/screens/municipal/municipal_page.dart';
+import 'package:tanod_incentives/screens/admin/admin_page.dart';
+import 'package:tanod_incentives/data/admin_data.dart'; // OPPDC (province) data
 import 'package:tanod_incentives/data/demo_data.dart';
 import 'package:tanod_incentives/data/cloud.dart'; // FIREBASE sign-in
 import 'package:tanod_incentives/widgets/notify.dart';
@@ -37,6 +39,12 @@ class _LoginFormState extends State<LoginForm> {
 
     // DEMO accounts (no Firebase needed): "demo" opens the barangay side,
     // a username with "reviewer" or "mlgoo" opens the municipality side.
+    // "oppdc" opens the OPPDC (province) dashboard with demo data.
+    if (u == 'oppdc') {
+      admin.openDemo();
+      Navigator.of(context).pushReplacement(MaterialPageRoute(builder: (_) => const AdminPage()));
+      return;
+    }
     final municipalDemo = u.contains('reviewer') || u.contains('mlgoo');
     if (!firebaseReady || u == 'demo' || municipalDemo) {
       Navigator.of(context).pushReplacement(MaterialPageRoute(
@@ -52,13 +60,10 @@ class _LoginFormState extends State<LoginForm> {
       final role = await cloud.signIn(u, _pass.text);
       if (!mounted) return;
       if (role == 'admin') {
-        notify(
-          context,
-          tr('The OPPDC screens still show demo data. They connect to Firebase next.',
-              'Demo data pa ang nasa screen ng OPPDC.', 'Demo data pa ang ara sa screen sang OPPDC.'),
-          type: NotifyType.warning,
-          title: tr('Not connected yet', 'Hindi pa konektado', 'Wala pa konektado'),
-        );
+        await admin.openLive(); // live data for every municipality and barangay
+        if (!mounted) return;
+        Navigator.of(context).pushReplacement(MaterialPageRoute(builder: (_) => const AdminPage()));
+        return;
       }
       Navigator.of(context).pushReplacement(MaterialPageRoute(
         builder: (_) => role == 'barangay' ? const DashboardPage() : const MunicipalPage(),
@@ -142,16 +147,6 @@ class _LoginFormState extends State<LoginForm> {
             ),
           ),
         ],
-        const SizedBox(height: 20),
-        Center(
-          child: Wrap(alignment: WrapAlignment.center, crossAxisAlignment: WrapCrossAlignment.center, children: [
-            Text('Barangay representative without an account? ', style: sans(14, color: C.muted)),
-            GestureDetector(
-              onTap: widget.onRequestAccess,
-              child: Text('Request access', style: sans(14, w: FontWeight.w600, color: C.blue)),
-            ),
-          ]),
-        ),
         const SizedBox(height: 24),
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 13),

@@ -27,9 +27,9 @@ enum BrgyStatus { notStarted, preparing, submitted, corrections, checked, sentTo
 String statusLabel(BrgyStatus s) => switch (s) {
       BrgyStatus.notStarted => tr('Not started', 'Hindi pa nagsisimula', 'Wala pa nagsugod'),
       BrgyStatus.preparing => tr('Preparing', 'Inihahanda pa', 'Ginahanda pa'),
-      BrgyStatus.submitted => tr('Paper set to check', 'Susuriin ang papel', 'Usisaon ang papel'),
+      BrgyStatus.submitted => tr('Documents on the way', 'Papunta na ang dokumento', 'Padulong na ang dokumento'),
       BrgyStatus.corrections => tr('Fixing corrections', 'Inaayos ang mali', 'Ginatadlong ang sala'),
-      BrgyStatus.checked => tr('Checked', 'Nasuri na', 'Nausisa na'),
+      BrgyStatus.checked => tr('Complete', 'Kumpleto', 'Kompleto'),
       BrgyStatus.sentToOppdc => tr('With OPPDC', 'Nasa OPPDC na', 'Ara na sa OPPDC'),
       BrgyStatus.released => tr('Released', 'Na-release na', 'Na-release na'),
     };
@@ -58,6 +58,10 @@ class DocFile {
 
   // FIREBASE: the reviewer's correction message for this document (tags it in the chat)
   String? note;
+
+  // PAPER CHECK: what the automatic check found on the upload (null = not checked)
+  String? checkNote;
+  bool checkOk = true;
 
   DocFile(this.kind);
 
@@ -119,10 +123,13 @@ class BrgyRecord {
   }) : chat = chat ?? [];
 
   int get payroll => tanods.length * kAmountEach;
-  int get backupCount => files.values.where((f) => f.done).length;
-  bool get backupComplete => backupCount == DocKind.values.length;
-  List<DocFile> get toFix => [for (final f in files.values) if (f.correction) f];
-  List<DocFile> get outdatedFiles => [for (final f in files.values) if (f.outdated) f];
+  /// The barangay's own documents (Certification + ID sheet).
+  List<DocFile> get docs => [for (final k in kBarangayDocs) files[k]!];
+  int get backupCount => docs.where((f) => f.done).length;
+  int get paperOkCount => kBarangayDocs.where(paperOk.contains).length;
+  bool get backupComplete => backupCount == kBarangayDocs.length;
+  List<DocFile> get toFix => [for (final f in docs) if (f.correction) f];
+  List<DocFile> get outdatedFiles => [for (final f in docs) if (f.outdated) f];
   ChatMsg? get last => chat.isEmpty ? null : chat.last;
 
   // The latest municipality message about one document.
@@ -159,12 +166,16 @@ class BrgyRecord {
   }
 }
 
-Map<DocKind, DocFile> filesWith(int uploaded, {String on = 'Oct 13'}) => {
-      for (var i = 0; i < DocKind.values.length; i++)
-        DocKind.values[i]: DocFile(DocKind.values[i])
-          ..version = (i < uploaded) ? 1 : 0
-          ..uploadedOn = (i < uploaded) ? on : null,
-    };
+// The barangay's own documents (Certification, ID sheet) are filled first.
+Map<DocKind, DocFile> filesWith(int uploaded, {String on = 'Oct 13'}) {
+  final order = [...kBarangayDocs, for (final k in DocKind.values) if (!kBarangayDocs.contains(k)) k];
+  return {
+    for (final k in DocKind.values)
+      k: DocFile(k)
+        ..version = order.indexOf(k) < uploaded ? 1 : 0
+        ..uploadedOn = order.indexOf(k) < uploaded ? on : null,
+  };
+}
 
 // Builds a believable tanod list for the OTHER demo barangays on the
 // municipality side. Brgy. Abat (the signed-in barangay) never uses this.
@@ -364,8 +375,8 @@ class DemoStore {
       final t12 = b.tanods.length > 11 ? b.tanods[11].fullName : 'No. 012';
       b.post(
         fromMunicipality: true,
-        doc: DocKind.masterlist,
-        text: 'No. 007 ($t7) is spelled differently on the paper Masterlist than on his ID. '
+        doc: DocKind.certification,
+        text: 'No. 007 ($t7) is spelled differently on the paper Certification than on his ID. '
             'Please correct it, have the page signed again, and upload the corrected copy.',
       );
       b.post(
@@ -373,7 +384,7 @@ class DemoStore {
         doc: DocKind.idSheet,
         text: 'No. 012 ($t12) has only 2 of 3 signatures on the ID photocopy.',
       );
-      b.files[DocKind.masterlist]!.correction = true;
+      b.files[DocKind.certification]!.correction = true;
       b.files[DocKind.idSheet]!.correction = true;
       b.status = BrgyStatus.corrections;
       return;

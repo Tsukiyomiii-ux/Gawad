@@ -3,6 +3,11 @@ import 'package:flutter/material.dart';
 // The four documents every barangay prepares for the tanod incentive.
 enum DocKind { payroll, masterlist, certification, idSheet }
 
+/// The documents the barangay signs, uploads and shares. Payroll and
+/// Masterlist are still made by the system (OPPDC / municipality can open
+/// them), but the barangay no longer previews or uploads them.
+const kBarangayDocs = [DocKind.certification, DocKind.idSheet];
+
 extension DocKindInfo on DocKind {
   // Official document names stay in English on every screen.
   String get title => switch (this) {

@@ -72,6 +72,8 @@ class _IdCameraScreenState extends State<IdCameraScreen> {
   bool _taking = false; // taking the picture
   DateTime _lastCheck = DateTime.fromMillisecondsSinceEpoch(0);
   final DateTime _openedAt = DateTime.now();
+  int _frames = 0; // frames received from the camera (0 = black preview)
+  int _restarts = 0; // automatic restarts after a black preview
 
   bool get _ready => _alignedFrames >= 3; // ≈ half a second of steady alignment
 
@@ -81,32 +83,82 @@ class _IdCameraScreenState extends State<IdCameraScreen> {
     _start();
   }
 
+  // Completes when the previous camera screen has fully closed its camera.
+  // Opening the BACK-photo camera while the FRONT one was still closing caused
+  // "CameraException(IllegalStateException… flutterSurfaceProducer… not yet
+  // been initialized)" on some Android phones.
+  static Future<void> _released = Future.value();
+
   Future<void> _start() async {
-    try {
-      final cams = await availableCameras();
-      final back = cams.firstWhere(
-        (c) => c.lensDirection == CameraLensDirection.back,
-        orElse: () => cams.first,
-      );
-      final cam = CameraController(
-        back,
-        ResolutionPreset.high,
-        enableAudio: false,
-        imageFormatGroup: defaultTargetPlatform == TargetPlatform.iOS
-            ? ImageFormatGroup.bgra8888
-            : ImageFormatGroup.yuv420,
-      );
-      await cam.initialize();
-      await cam.lockCaptureOrientation(DeviceOrientation.portraitUp);
-      if (!mounted) {
+    const tries = 3;
+    for (var attempt = 1; attempt <= tries; attempt++) {
+      CameraController? cam;
+      try {
+        await _released; // wait for the previous camera to be closed
+        if (attempt > 1) await Future.delayed(Duration(milliseconds: 600 * attempt));
+        if (!mounted) return;
+        final cams = await availableCameras();
+        final back = cams.firstWhere(
+          (c) => c.lensDirection == CameraLensDirection.back,
+          orElse: () => cams.first,
+        );
+        cam = CameraController(
+          back,
+          ResolutionPreset.high,
+          enableAudio: false,
+          imageFormatGroup: defaultTargetPlatform == TargetPlatform.iOS
+              ? ImageFormatGroup.bgra8888
+              : ImageFormatGroup.yuv420,
+        );
+        await cam.initialize();
+        try {
+          await cam.lockCaptureOrientation(DeviceOrientation.portraitUp);
+        } catch (_) {} // not supported on every phone; the guide still works
+        if (!mounted) {
+          await cam.dispose();
+          return;
+        }
+        _frames = 0;
+        setState(() => _cam = cam);
+        await cam.startImageStream(_onFrame);
+        _watchForBlackPreview(cam);
+        return; // camera is running
+      } catch (e) {
+        debugPrint('Camera start failed (try $attempt of $tries): $e');
+        if (mounted && identical(_cam, cam)) setState(() => _cam = null);
+        try {
+          await cam?.dispose();
+        } catch (_) {}
+        if (attempt == tries && mounted) {
+          setState(() => _error = 'The camera could not start. Close other apps using the camera, then tap Try again.');
+        }
+      }
+    }
+  }
+
+  // BLACK SCREEN FIX: some phones open the camera (usually the 2nd time, for the
+  // BACK of the ID) but never send a picture. If no frame arrives in 2.5 s,
+  // close the camera and open it again (up to 2 times), then show Try again.
+  void _watchForBlackPreview(CameraController cam) {
+    Future.delayed(const Duration(milliseconds: 2500), () async {
+      if (!mounted || !identical(_cam, cam) || _frames > 0) return;
+      debugPrint('Camera: no picture after 2.5 s (black preview), restarting…');
+      setState(() => _cam = null);
+      try {
+        if (cam.value.isStreamingImages) await cam.stopImageStream();
+      } catch (_) {}
+      try {
         await cam.dispose();
+      } catch (_) {}
+      if (!mounted) return;
+      if (_restarts >= 2) {
+        setState(() => _error = 'The camera shows a black screen. Tap Try again, or close and reopen the scanner.');
         return;
       }
-      setState(() => _cam = cam);
-      await cam.startImageStream(_onFrame);
-    } catch (e) {
-      if (mounted) setState(() => _error = 'Camera not available: $e');
-    }
+      _restarts++;
+      _released = Future.delayed(const Duration(milliseconds: 800));
+      _start();
+    });
   }
 
   @override
@@ -114,8 +166,16 @@ class _IdCameraScreenState extends State<IdCameraScreen> {
     final cam = _cam;
     _cam = null;
     if (cam != null) {
-      if (cam.value.isStreamingImages) cam.stopImageStream().catchError((_) {});
-      cam.dispose();
+      // The next camera screen waits for this to finish before opening
+      _released = () async {
+        try {
+          if (cam.value.isStreamingImages) await cam.stopImageStream();
+        } catch (_) {}
+        try {
+          await cam.dispose();
+        } catch (_) {}
+        await Future.delayed(const Duration(milliseconds: 700)); // let Android release the camera
+      }();
     }
     super.dispose();
   }
@@ -125,6 +185,7 @@ class _IdCameraScreenState extends State<IdCameraScreen> {
   // ---------------------------------------------------------------------------
 
   void _onFrame(CameraImage img) {
+    _frames++;
     final now = DateTime.now();
     if (_busy || _taking || now.difference(_lastCheck).inMilliseconds < 150) return;
     _busy = true;
@@ -266,7 +327,21 @@ class _IdCameraScreenState extends State<IdCameraScreen> {
           ? Center(
               child: Padding(
                 padding: const EdgeInsets.all(24),
-                child: Text(_error!, textAlign: TextAlign.center, style: const TextStyle(color: Colors.white)),
+                child: Column(mainAxisSize: MainAxisSize.min, children: [
+                  const Icon(Icons.no_photography_outlined, color: Colors.white70, size: 48),
+                  const SizedBox(height: 14),
+                  Text(_error!, textAlign: TextAlign.center, style: const TextStyle(color: Colors.white, fontSize: 16, height: 1.4)),
+                  const SizedBox(height: 18),
+                  FilledButton.icon(
+                    onPressed: () {
+                      setState(() => _error = null); // back to the loading circle
+                      _restarts = 0;
+                      _start();
+                    },
+                    icon: const Icon(Icons.refresh_rounded),
+                    label: const Text('Try again'),
+                  ),
+                ]),
               ),
             )
           : cam == null || !cam.value.isInitialized

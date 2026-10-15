@@ -15,9 +15,6 @@ import 'package:tanod_incentives/screens/auth/auth_page.dart';
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // TEMP: print layout (overflow) errors in full. Remove before the demo.
-  FlutterError.onError = (details) => FlutterError.dumpErrorToConsole(details, forceReport: true);
-
   try {
     await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
     // Offline mode (same as the team's setup): keep a copy of the data on the

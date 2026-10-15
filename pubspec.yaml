@@ -10,7 +10,6 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-
   # PDF generation & preview
   pdf: ^3.11.1
   printing: ^5.13.2

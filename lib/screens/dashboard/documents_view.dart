@@ -1,3 +1,4 @@
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
 
 import 'package:tanod_incentives/theme.dart';
@@ -14,6 +15,7 @@ import 'package:tanod_incentives/widgets/save_file.dart'; // direct download
 import 'package:tanod_incentives/widgets/id_fields.dart'; // PhilSys ID field
 import 'package:tanod_incentives/data/cloud.dart'; // FIREBASE saving
 import 'package:tanod_incentives/widgets/pdf_pages.dart'; // previews = the real PDF
+import 'package:tanod_incentives/widgets/paper_check.dart' show kSignedCopyMark;
 
 export 'package:tanod_incentives/data/doc_kind.dart';
 
@@ -122,16 +124,11 @@ Widget? uploadedCopyView(DocFile f, {bool thumbnail = false}) {
         : InteractiveViewer(maxScale: 5, child: Center(child: Image.memory(bytes)));
   }
   if (thumbnail) {
-    return Container(
-      width: 720,
-      height: 480,
-      color: Colors.white,
-      alignment: Alignment.center,
-      child: Column(mainAxisSize: MainAxisSize.min, children: [
-        const Icon(Icons.picture_as_pdf_rounded, size: 140, color: C.red),
-        const SizedBox(height: 12),
-        Text(f.fileName ?? 'PDF', style: sans(34, w: FontWeight.w700, color: C.navy)),
-      ]),
+    // The uploaded PDF's own first page (not an icon)
+    return PdfPages(
+      cacheKey: 'upload|${f.kind.name}|${f.version}|${f.fileName}|${bytes.length}',
+      build: () async => bytes,
+      thumbnail: true,
     );
   }
   return PdfPreview(
@@ -141,6 +138,19 @@ Widget? uploadedCopyView(DocFile f, {bool thumbnail = false}) {
     canChangeOrientation: false,
     canDebug: false,
   );
+}
+
+/// The uploaded signed copy as a PDF (a photo is put on an A4 page).
+/// Used for downloading and for the archive.
+Future<Uint8List> signedCopyAsPdf(Uint8List bytes, {required bool isPdf}) async {
+  if (isPdf) return bytes;
+  final doc = pw.Document(creator: kSignedCopyMark);
+  doc.addPage(pw.Page(
+    pageFormat: PdfPageFormat.a4,
+    margin: const pw.EdgeInsets.all(20),
+    build: (_) => pw.Center(child: pw.Image(pw.MemoryImage(bytes), fit: pw.BoxFit.contain)),
+  ));
+  return doc.save();
 }
 
 /// Download / share the uploaded signed copy. Pictures are wrapped in a
@@ -155,7 +165,8 @@ Future<void> shareSignedCopy(BuildContext context, BrgyRecord rec, DocKind k) as
   }
   var pdfBytes = bytes;
   if (!f.isPdf) {
-    final doc = pw.Document();
+    // Marked so the paper check knows this PDF holds a signed photo (not the blank app file)
+    final doc = pw.Document(creator: kSignedCopyMark);
     doc.addPage(pw.Page(
       pageFormat: PdfPageFormat.a4,
       margin: const pw.EdgeInsets.all(20),
@@ -238,6 +249,23 @@ Future<void> showBackupCopy(
                 Expanded(child: Text(status, style: sans(14, color: fg, h: 1.4))),
               ]),
             ),
+            // PAPER CHECK result (what the automatic check found on this upload)
+            if (f.uploaded && (f.checkNote ?? '').isNotEmpty)
+              Container(
+                margin: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+                decoration: BoxDecoration(
+                    color: f.checkOk ? C.greenSoft : const Color(0xFFFFF8E1), borderRadius: BorderRadius.circular(10)),
+                child: Row(children: [
+                  Icon(f.checkOk ? Icons.fact_check_outlined : Icons.report_gmailerrorred_rounded,
+                      size: 18, color: f.checkOk ? const Color(0xFF14583D) : const Color(0xFF5C4400)),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(f.checkNote!,
+                        style: sans(14, color: f.checkOk ? const Color(0xFF14583D) : const Color(0xFF5C4400), h: 1.4)),
+                  ),
+                ]),
+              ),
             const Divider(height: 1, color: C.line),
             Flexible(
               child: f.bytes != null
@@ -573,7 +601,7 @@ class _DocumentsViewState extends State<DocumentsView> {
       ]);
 
   Widget _editorPanel(BuildContext ctx, VoidCallback changed, VoidCallback preview) {
-    final anySigned = rec.files.values.any((f) => f.uploaded);
+    final anySigned = rec.docs.any((f) => f.uploaded);
     return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
       Container(
         padding: const EdgeInsets.all(12),
@@ -839,10 +867,10 @@ class _DocumentsViewState extends State<DocumentsView> {
       ],
       const SizedBox(height: 16),
       LayoutBuilder(builder: (context, box) {
-        final cols = box.maxWidth >= 900 ? 4 : (box.maxWidth >= 520 ? 2 : 1);
+        final cols = box.maxWidth >= 520 ? 2 : 1; // Certification + ID sheet
         final cw = ((box.maxWidth - 16 * (cols - 1)) / cols).floorToDouble();
         return Wrap(spacing: 16, runSpacing: 16, children: [
-          for (final k in DocKind.values) SizedBox(width: cw, child: filledTab ? _filledCard(k) : _blankCard(k)),
+          for (final k in kBarangayDocs) SizedBox(width: cw, child: filledTab ? _filledCard(k) : _blankCard(k)),
         ]);
       }),
     ]);
@@ -1068,15 +1096,36 @@ class _DocumentsViewState extends State<DocumentsView> {
     }
 
     return _cardShell([
-      _thumb(
-        paper: f.uploaded
-            ? (uploadedCopyView(f, thumbnail: true) ?? paperFor(rec, k, signed: true))
-            : officialPreview(rec, k, thumbnail: true, fallback: _paper(k, true)), // the real PDF's first page
-        badge: f.uploaded ? (f.outdated ? 'OLD SIGNED COPY' : 'SIGNED COPY') : 'READY TO PRINT',
-        badgeColor: f.uploaded ? (f.outdated ? C.yellowDark : C.green) : C.blue,
-        photo: f.uploaded && f.bytes == null, // real uploads are shown as they are
-        onTap: () => f.uploaded ? _viewBackup(k) : _edit(k),
-      ),
+      Stack(children: [
+        _thumb(
+          paper: f.uploaded
+              ? (uploadedCopyView(f, thumbnail: true) ?? paperFor(rec, k, signed: true))
+              : officialPreview(rec, k, thumbnail: true, fallback: _paper(k, true)), // the real PDF's first page
+          badge: f.uploaded ? (f.outdated ? 'OLD SIGNED COPY' : 'UPLOADED') : 'READY TO PRINT',
+          badgeColor: f.uploaded ? (f.outdated ? C.yellowDark : C.green) : C.blue,
+          photo: f.uploaded && f.bytes == null, // real uploads are shown as they are
+          onTap: () => f.uploaded ? _viewBackup(k) : _edit(k),
+        ),
+        // UPLOADED: big green check on the document
+        if (f.done)
+          Positioned(
+            top: 10,
+            right: 10,
+            child: IgnorePointer(
+              child: Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  color: C.green,
+                  shape: BoxShape.circle,
+                  border: Border.all(color: Colors.white, width: 3),
+                  boxShadow: [BoxShadow(color: C.navy.withValues(alpha: .25), blurRadius: 8, offset: const Offset(0, 2))],
+                ),
+                child: const Icon(Icons.check_rounded, color: Colors.white, size: 24),
+              ),
+            ),
+          ),
+      ]),
       Padding(
         padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
         child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [

@@ -23,10 +23,14 @@ import 'package:firebase_auth/firebase_auth.dart' show FirebaseAuthException;
 import 'package:firebase_core/firebase_core.dart' show FirebaseException;
 import 'package:flutter/foundation.dart';
 import 'package:image/image.dart' as img;
+import 'package:printing/printing.dart' show Printing;
+import 'package:pdf/widgets.dart' as pw;
+import 'package:pdf/pdf.dart' show PdfPageFormat;
 
 import 'package:tanod_incentives/theme.dart';
 import 'package:tanod_incentives/data/demo_data.dart';
 import 'package:tanod_incentives/data/doc_kind.dart';
+import 'package:tanod_incentives/Templates/payroll_template.dart' show payrollOfficials;
 import 'package:tanod_incentives/data/store.dart';
 import 'package:tanod_incentives/services/auth_service.dart';
 import 'package:tanod_incentives/services/database_service.dart';
@@ -177,6 +181,18 @@ class Cloud {
       }
     }, onError: _onStreamError));
     _subs.add(db.watchBarangayTanods(barangayId, y).listen(_applyTanods, onError: _onStreamError));
+    // The municipality's status with OPPDC (needs the barangay read rule on
+    // municipalCompliance; without it the tracker just stops at "Received")
+    _muniStatusForBrgy = '';
+    _subs.add(_fs
+        .collection('municipalCompliance')
+        .doc(DatabaseService.complianceId(y, municipalityId))
+        .snapshots()
+        .listen((s) {
+      _muniStatusForBrgy = '${s.data()?['status'] ?? ''}';
+      _applyBarangayStage();
+      _changed();
+    }, onError: (Object e) => debugPrint('Municipal status not readable (rules): $e')));
     _subs.add(db.messages.watchMessages(threadId, limit: 200).listen(_applyMessages, onError: _onStreamError));
     _subs.add(_fs.collection('threads').doc(threadId).snapshots().listen((s) {
       final unread = s.data()?['unread'];
@@ -186,6 +202,27 @@ class Cloud {
     for (final k in DocKind.values) {
       _subs.add(_copyRef(k).snapshots().listen((s) => _applyCopy(k, s), onError: _onStreamError));
     }
+  }
+
+  // BARANGAY STAGE: the barangay's own status + its municipality's status with
+  // OPPDC (same rule as the admin dashboard):
+  //   verified by the municipality  → Received at the Municipality
+  //   + municipality submitted      → Enroute to OPPDC
+  //   + OPPDC verified municipality → Incentive Released
+  String _bcStatus = '';
+  String _muniStatusForBrgy = '';
+
+  void _applyBarangayStage() {
+    rec.status = switch (_bcStatus) {
+      Status.submitted => BrgyStatus.submitted,
+      Status.returned => BrgyStatus.corrections,
+      Status.verified => switch (_muniStatusForBrgy) {
+          Status.verified => BrgyStatus.released,
+          Status.submitted => BrgyStatus.sentToOppdc,
+          _ => BrgyStatus.checked,
+        },
+      _ => BrgyStatus.preparing,
+    };
   }
 
   void _applyCompliance(Map<String, dynamic> bc) {
@@ -198,12 +235,8 @@ class Cloud {
     awardEnd = (bc['awardEnd'] as num?)?.toInt() ?? awardStart + kQuota - 1;
     usedNumbers = ((bc['usedNumbers'] as List?) ?? []).map((e) => (e as num).toInt()).toSet();
 
-    rec.status = switch (bc['status']) {
-      Status.submitted => BrgyStatus.submitted,
-      Status.returned => BrgyStatus.corrections,
-      Status.verified => BrgyStatus.checked,
-      _ => BrgyStatus.preparing,
-    };
+    _bcStatus = '${bc['status'] ?? ''}';
+    _applyBarangayStage();
 
     // Signatories: the Punong Barangay, and whoever prepares the documents
     final sigs = (bc['signatories'] as List?) ?? [];
@@ -336,7 +369,9 @@ class Cloud {
       ..isPdf = m['isPdf'] == true
       ..outdated = m['outdated'] == true
       ..correction = m['correction'] == true
-      ..note = m['correctionNote'] as String?;
+      ..note = m['correctionNote'] as String?
+      ..checkNote = uploaded ? m['autoCheck'] as String? : null
+      ..checkOk = m['autoCheckOk'] != false;
     if (m['paperOk'] == true) {
       r.paperOk.add(f.kind);
     } else {
@@ -353,7 +388,9 @@ class Cloud {
       ..isPdf = false
       ..outdated = false
       ..correction = false
-      ..note = null;
+      ..note = null
+      ..checkNote = null
+      ..checkOk = true;
   }
 
   // ======================= SAVING (barangay) =======================
@@ -427,15 +464,27 @@ class Cloud {
   }
 
   /// Photo or file of a signed document (the backup copy).
-  Future<void> uploadSignedCopy(DocKind k, {required Uint8List bytes, required String fileName, required bool isPdf, required String via}) async {
+  /// Saves the signed copy online. Waits for the database to answer, so a
+  /// refused or too-big file shows an error instead of failing quietly
+  /// (that is how the municipality ended up seeing only the app's file).
+  /// With no internet the save is queued and sent when the phone is back online.
+  Future<void> uploadSignedCopy(DocKind k,
+      {required Uint8List bytes,
+      required String fileName,
+      required bool isPdf,
+      required String via,
+      required int version,
+      String? check,
+      bool checkOk = true}) async {
     if (!live) return;
-    final data = isPdf ? bytes : await compute(compressPagePhoto, bytes);
+    var data = isPdf ? bytes : await compute(compressPagePhoto, bytes);
+    // A big PDF (scans, many ID photos) is redrawn smaller so it fits
+    if (isPdf && data.length > 900 * 1024) data = await shrinkPdf(data);
     if (data.length > 900 * 1024) {
       throw StateError('This file is too big to save online (${data.length ~/ 1024} KB, the limit is 900 KB). '
           'Take a photo instead, or make the PDF smaller.');
     }
-    final f = rec.files[k]!;
-    _write(_copyRef(k).set({
+    final save = _copyRef(k).set({
       'year': year,
       'barangayId': barangayId,
       'municipalityId': municipalityId,
@@ -444,11 +493,53 @@ class Cloud {
       'isPdf': isPdf,
       'via': via,
       'data': Blob(data),
-      'version': f.version, // already increased on screen
+      'version': version,
       'outdated': false,
       'correction': false,
+      'autoCheck': check,
+      'autoCheckOk': checkOk,
       'uploadedAt': FieldValue.serverTimestamp(),
-    }));
+    });
+    _track(save);
+    await save.timeout(const Duration(seconds: 20), onTimeout: () {}); // offline: stays queued
+  }
+
+  /// Before sharing: every signed copy must really be in the database, so the
+  /// municipality opens the signed papers and not the app's ready-to-print files.
+  /// A copy that is missing there is sent again from this phone.
+  Future<void> _ensureSignedCopiesOnline() async {
+    for (final k in kBarangayDocs) {
+      final f = rec.files[k]!;
+      if (!f.uploaded) {
+        throw StateError('Upload the signed ${k.title} first.');
+      }
+      Map<String, dynamic>? m;
+      try {
+        final s = await _copyRef(k).get(const GetOptions(source: Source.server)).timeout(const Duration(seconds: 15));
+        m = s.data();
+      } catch (_) {
+        throw StateError('No internet connection. Connect to the internet and press Share again, '
+            'so the municipality receives your signed copies.');
+      }
+      final online = m != null && m['data'] is Blob && (m['version'] as num?)?.toInt() == f.version;
+      if (online) continue;
+      final bytes = f.bytes;
+      if (bytes == null) {
+        throw StateError('The signed ${k.title} did not reach the database. Please upload it again.');
+      }
+      await uploadSignedCopy(k,
+          bytes: bytes,
+          fileName: f.fileName ?? '${k.title}.${f.isPdf ? 'pdf' : 'jpg'}',
+          isPdf: f.isPdf,
+          via: f.via,
+          version: f.version,
+          check: f.checkNote,
+          checkOk: f.checkOk);
+      final again = await _copyRef(k).get(const GetOptions(source: Source.server)).timeout(const Duration(seconds: 15));
+      if (again.data()?['data'] is! Blob) {
+        throw StateError('The signed ${k.title} could not be saved online. Please upload it again.');
+      }
+    }
   }
 
   /// The tanod list changed after signing: uploaded copies no longer match.
@@ -463,6 +554,7 @@ class Cloud {
   /// signed ID (the team's submit check needs documents.idSigned on each tanod).
   Future<void> submit() async {
     if (!live) return;
+    await _ensureSignedCopiesOnline(); // the signed papers, not the generated files
     for (final t in rec.tanods) {
       if (t.id != null) await db.setChecklist(t.id!, idSigned: true);
     }
@@ -571,7 +663,24 @@ class Cloud {
     municipalStatus = '${mc['status'] ?? Status.inProgress}';
     store.sentToOppdc = municipalStatus == Status.submitted || municipalStatus == Status.verified;
     store.sentOn = store.sentToOppdc ? timeLabel(mc['submittedAt']) : null;
+    // Payroll signatories the municipality edited
+    final officials = mc['payrollOfficials'];
+    if (officials is Map) {
+      for (final e in officials.entries) {
+        payrollOfficials['${e.key}'] = '${e.value ?? ''}';
+      }
+    }
     _refreshStatuses();
+  }
+
+  /// Saves the Payroll signatories (municipalCompliance/{year_psgc}.payrollOfficials).
+  Future<void> savePayrollOfficials(Map<String, String> officials) async {
+    if (!isMunicipal) return;
+    await _fs
+        .collection('municipalCompliance')
+        .doc(DatabaseService.complianceId(year, municipalityId))
+        .set({'payrollOfficials': officials}, SetOptions(merge: true))
+        .timeout(const Duration(seconds: 20), onTimeout: () {});
   }
 
   void _applyBarangays(QuerySnapshot<Map<String, dynamic>> snap) {
@@ -761,7 +870,21 @@ class Cloud {
 
   void _onStreamError(Object e) => _error(friendly(e));
 
-  void _write(Future<void> f) => unawaited(f.catchError((Object e) => _error(friendly(e))));
+  /// SYNC CHIP: saves sent to Firebase but not confirmed by the server yet
+  /// (offline they stay here until the internet is back).
+  final pendingWrites = ValueNotifier<int>(0);
+
+  void _track(Future<void> f) {
+    pendingWrites.value++;
+    f.then((_) {}, onError: (Object _) {}).whenComplete(() {
+      if (pendingWrites.value > 0) pendingWrites.value--;
+    });
+  }
+
+  void _write(Future<void> f) {
+    _track(f);
+    unawaited(f.catchError((Object e) => _error(friendly(e))));
+  }
 
   static DocKind? _docKind(dynamic name) {
     for (final k in DocKind.values) {
@@ -814,6 +937,37 @@ String timeLabel(dynamic ts) {
 }
 
 /// ID card photo → small JPG (a Firestore record holds at most 1 MB for both sides).
+/// Makes a big PDF smaller: each page is redrawn as a JPG picture
+/// (tries sharper first, then smaller until it fits under ~880 KB).
+Future<Uint8List> shrinkPdf(Uint8List pdf) async {
+  for (final (dpi, quality) in const [(120.0, 65), (96.0, 55), (72.0, 45)]) {
+    try {
+      final doc = pw.Document(creator: 'Gawad signed copy');
+      await for (final page in Printing.raster(pdf, dpi: dpi)) {
+        final png = await page.toPng();
+        final jpg = await compute(_toJpg, (png, quality));
+        final w = page.width * 72 / dpi, h = page.height * 72 / dpi; // points
+        doc.addPage(pw.Page(
+          pageFormat: PdfPageFormat(w, h),
+          margin: pw.EdgeInsets.zero,
+          build: (_) => pw.Image(pw.MemoryImage(jpg), fit: pw.BoxFit.fill),
+        ));
+      }
+      final out = await doc.save();
+      if (out.length <= 880 * 1024) return out;
+    } catch (e) {
+      debugPrint('shrinkPdf: $e');
+      break;
+    }
+  }
+  return pdf; // couldn't make it small enough: the size check reports it
+}
+
+Uint8List _toJpg((Uint8List, int) job) {
+  final image = img.decodeImage(job.$1);
+  return image == null ? job.$1 : Uint8List.fromList(img.encodeJpg(image, quality: job.$2));
+}
+
 Uint8List compressIdPhoto(Uint8List bytes) => _shrink(bytes, maxSide: 1000, quality: 75);
 
 /// Photo of a signed paper → JPG under ~900 KB.

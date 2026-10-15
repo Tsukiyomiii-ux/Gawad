@@ -1,1 +1,262 @@
-{"flutter":{"platforms":{"android":{"default":{"projectId":"gawad-8a588","appId":"1:459578886179:android:ff2c47ddd60634e740c996","fileOutput":"android/app/google-services.json"}},"dart":{"lib/firebase_options.dart":{"projectId":"gawad-8a588","configurations":{"android":"1:459578886179:android:ff2c47ddd60634e740c996","windows":"1:459578886179:web:d30a200e156456a140c996"}}}}}}
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ---------- Who is asking ----------
+    function signedIn() { return request.auth != null; }
+    function me() { return get(/databases/$(database)/documents/users/$(request.auth.uid)).data; }
+    function isAdmin() { return signedIn() && me().role == 'admin'; }
+    function isMunicipal() { return signedIn() && me().role == 'municipal'; }
+    function isBarangay() { return signedIn() && me().role == 'barangay'; }
+
+    // ---------- Helpers ----------
+    function onlyChanges(keys) {
+      return request.resource.data.diff(resource.data).affectedKeys().hasOnly(keys);
+    }
+    function editable(status) { return status in ['in_progress', 'returned']; }
+    // ids look like "2026_0603036018"
+    function bcPath(id) { return /databases/$(database)/documents/barangayCompliance/$(id); }
+    function mcPath(id) { return /databases/$(database)/documents/municipalCompliance/$(id); }
+
+    // ---------- Accounts: only OPPDC creates and edits them ----------
+    match /users/{uid} {
+      allow read: if signedIn() && (request.auth.uid == uid || isAdmin());
+      allow write: if isAdmin();
+    }
+
+    // ---------- Reference data: everyone logged in can read, only OPPDC edits ----------
+    match /settings/{docId} {
+      allow read: if signedIn();
+      allow write: if isAdmin();
+    }
+    match /years/{year} {
+      allow read: if signedIn();
+      allow write: if isAdmin();
+    }
+    match /municipalities/{psgc} {
+      allow read: if signedIn();
+      allow write: if isAdmin();
+    }
+    match /barangays/{psgc} {
+      allow read: if signedIn();
+      allow write: if isAdmin();
+    }
+
+    // ---------- This year's status of each barangay ----------
+    match /barangayCompliance/{id} {
+      allow read: if isAdmin()
+        || (isMunicipal() && resource.data.municipalityId == me().municipalityId)
+        || (isBarangay() && resource.data.barangayId == me().barangayId);
+
+      allow create, delete: if isAdmin();
+
+      allow update: if isAdmin()
+        // Barangay, only while not submitted: claim/free award numbers,
+        // edit signatories, or submit
+        || (isBarangay() && resource.data.barangayId == me().barangayId
+            && editable(resource.data.status)
+            && (onlyChanges(['usedNumbers'])
+                || onlyChanges(['signatories'])
+                || (onlyChanges(['status', 'submittedAt'])
+                    && request.resource.data.status == 'submitted')))
+        // Municipality: verify or return its own barangays, only before it
+        // submits to OPPDC
+        || (isMunicipal() && resource.data.municipalityId == me().municipalityId
+            && resource.data.status in ['submitted', 'verified']
+            && request.resource.data.status in ['verified', 'returned']
+            && onlyChanges(['status', 'reviewedAt', 'reviewNote'])
+            && editable(get(mcPath(string(resource.data.year) + '_' + resource.data.municipalityId)).data.status));
+    }
+
+    // ---------- This year's status of each municipality ----------
+    match /municipalCompliance/{id} {
+      allow read: if isAdmin()
+        || (isMunicipal() && resource.data.municipalityId == me().municipalityId)
+        // ADDED: a barangay can see its own town's status (for its tracker)
+        || (isBarangay() && resource.data.municipalityId == me().municipalityId);
+
+      allow create, delete: if isAdmin();
+
+      allow update: if isAdmin()
+        || (isMunicipal() && resource.data.municipalityId == me().municipalityId
+            && editable(resource.data.status)
+            && (onlyChanges(['signatories'])
+                || onlyChanges(['payrollOfficials'])   // ADDED: Payroll signatory names
+                || (onlyChanges(['status', 'submittedAt'])
+                    && request.resource.data.status == 'submitted')));
+    }
+
+    // ---------- Tanods ----------
+    match /tanods/{tanodId} {
+      // Award number must be an int inside the barangay's block, not used yet,
+      // and claimed on the barangay record in the same save (keeps it unique)
+      function validNewTanod() {
+        let d = request.resource.data;
+        let bcId = string(d.year) + '_' + d.barangayId;
+        let bc = get(bcPath(bcId)).data;
+        return d.awardNumber is int
+          && d.year is int
+          && d.status == 'active'
+          && d.firstName is string && d.firstName.size() > 0
+          && d.lastName is string && d.lastName.size() > 0
+          && d.municipalityId == bc.municipalityId
+          && editable(bc.status)
+          && d.awardNumber >= bc.awardStart && d.awardNumber <= bc.awardEnd
+          && !(d.awardNumber in bc.usedNumbers)
+          && d.awardNumber in getAfter(bcPath(bcId)).data.usedNumbers;
+      }
+      function tanodEditable() {
+        return editable(get(bcPath(string(resource.data.year) + '_' + resource.data.barangayId)).data.status);
+      }
+
+      allow read: if isAdmin()
+        || (isMunicipal() && resource.data.municipalityId == me().municipalityId)
+        || (isBarangay() && resource.data.barangayId == me().barangayId);
+
+      allow create: if (isAdmin()
+          || (isBarangay() && request.resource.data.barangayId == me().barangayId))
+        && validNewTanod();
+
+      // Award number, barangay and year can never be changed by a barangay
+      allow update: if isAdmin()
+        || (isBarangay() && resource.data.barangayId == me().barangayId
+            && ((tanodEditable()
+                 && onlyChanges(['firstName', 'middleInitial', 'lastName', 'address',
+                                 'documents', 'hasIdScan', 'status', 'replacedAt',
+                                 'nameChecked', 'suffix']))   // ADDED: name check + suffix
+                // payroll can still be ticked after submitting (signed upon release)
+                || (onlyChanges(['documents'])
+                    && request.resource.data.documents.diff(resource.data.documents)
+                         .affectedKeys().hasOnly(['payrollSigned']))));
+
+      allow delete: if isAdmin();
+    }
+
+    // ---------- ID scan images ----------
+    match /idScans/{tanodId} {
+      allow read: if isAdmin()
+        || (isMunicipal() && resource.data.municipalityId == me().municipalityId)
+        || (isBarangay() && resource.data.barangayId == me().barangayId);
+
+      allow create, update: if isAdmin()
+        || (isBarangay() && request.resource.data.barangayId == me().barangayId
+            && editable(get(bcPath(string(request.resource.data.year) + '_'
+                                   + request.resource.data.barangayId)).data.status));
+
+      allow delete: if isAdmin();
+    }
+
+    // ---------- ADDED: Signed copies (the barangay's uploaded signed papers) ----------
+    // id: "2026_<barangayPsgc>_<certification|idSheet>"
+    // The barangay uploads; its municipality marks corrections / paper OK.
+    match /signedCopies/{copyId} {
+      // resource == null: a copy not uploaded yet (the app listens for it)
+      allow read: if signedIn() && (resource == null
+        || isAdmin()
+        || (isMunicipal() && resource.data.municipalityId == me().municipalityId)
+        || (isBarangay() && resource.data.barangayId == me().barangayId));
+
+      allow create, update: if isAdmin()
+        || (isBarangay() && request.resource.data.barangayId == me().barangayId
+            && request.resource.data.municipalityId == me().municipalityId)
+        || (isMunicipal() && request.resource.data.municipalityId == me().municipalityId);
+
+      allow delete: if isAdmin();
+    }
+
+    // ---------- Archive (backup PDFs) ----------
+    // Permanent records: anyone allowed can add a new version, nobody can edit,
+    // only OPPDC can delete. Uploads are allowed even after submitting, since
+    // they are backups.
+    match /archives/{archiveId} {
+      function canSee(a) {
+        return isAdmin()
+          || (isMunicipal() && a.municipalityId == me().municipalityId)
+          || (isBarangay() && a.level == 'barangay' && a.barangayId == me().barangayId);
+      }
+      function validArchive() {
+        let d = request.resource.data;
+        return d.type in ['id_photocopy', 'barangay_certificate', 'masterlist', 'payroll']
+          && d.level in ['barangay', 'municipal']
+          && d.year is int
+          && d.fileName is string && d.fileName.size() > 0
+          && d.sizeBytes is int && d.sizeBytes > 0 && d.sizeBytes <= 8388608
+          && d.chunkCount is int && d.chunkCount > 0 && d.chunkCount <= 10
+          && d.uploadedBy == request.auth.uid;
+      }
+
+      allow read: if canSee(resource.data);
+
+      allow create: if validArchive()
+        && (isAdmin()
+            // barangay: only its own barangay documents
+            || (isBarangay()
+                && request.resource.data.level == 'barangay'
+                && request.resource.data.barangayId == me().barangayId
+                && request.resource.data.municipalityId == me().municipalityId)
+            // municipality: its own documents and its barangays' documents
+            || (isMunicipal()
+                && request.resource.data.municipalityId == me().municipalityId));
+
+      allow update: if false;
+      allow delete: if isAdmin();
+
+      match /chunks/{chunkId} {
+        function parent() {
+          return get(/databases/$(database)/documents/archives/$(archiveId)).data;
+        }
+        function parentAfter() {
+          return getAfter(/databases/$(database)/documents/archives/$(archiveId)).data;
+        }
+
+        allow read: if canSee(parent());
+        // only the person who uploaded the file can add its pieces
+        allow create: if parentAfter().uploadedBy == request.auth.uid
+          && request.resource.data.data is bytes
+          && request.resource.data.data.size() <= 921600;
+        allow update: if false;
+        allow delete: if isAdmin();
+      }
+    }
+
+    // ---------- Messages ----------
+    match /threads/{threadId} {
+      // barangay thread: that barangay + its municipality
+      // municipal thread: that municipality + OPPDC
+      function canUse(t) {
+        return (isMunicipal() && t.municipalityId == me().municipalityId)
+          || (t.type == 'barangay' && isBarangay() && t.barangayId == me().barangayId)
+          || (t.type == 'municipal' && isAdmin());
+      }
+
+      allow read: if isAdmin() || canUse(resource.data);
+      allow create, delete: if isAdmin();
+      allow update: if isAdmin()
+        || (canUse(resource.data)
+            && onlyChanges(['lastMessage', 'lastType', 'lastSenderRole', 'lastAt', 'unread']));
+
+      match /messages/{messageId} {
+        function thread() {
+          return get(/databases/$(database)/documents/threads/$(threadId)).data;
+        }
+
+        allow read: if isAdmin() || canUse(thread());
+
+        // Reminders: municipality -> barangay, and OPPDC -> municipality
+        allow create: if canUse(thread())
+          && request.resource.data.senderUid == request.auth.uid
+          && request.resource.data.senderRole == me().role
+          && request.resource.data.text is string
+          && request.resource.data.text.size() > 0
+          && request.resource.data.text.size() <= 2000
+          && (request.resource.data.type == 'message'
+              || (request.resource.data.type == 'reminder'
+                  && ((thread().type == 'barangay' && isMunicipal())
+                      || (thread().type == 'municipal' && isAdmin()))));
+
+        // Messages can't be edited or deleted
+        allow update, delete: if false;
+      }
+    }
+  }
+}
