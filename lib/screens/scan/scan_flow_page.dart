@@ -1,7 +1,9 @@
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
 
 import 'package:tanod_incentives/theme.dart';
 import 'package:tanod_incentives/widgets/notify.dart'; // top pop-ups
+import 'package:tanod_incentives/widgets/id_fields.dart'; // PhilSys ID field + ID photo picker
 import 'package:tanod_incentives/data/demo_data.dart';
 import 'package:tanod_incentives/widgets/app_field.dart';
 // MERGE: real scanners instead of the mock reader
@@ -12,7 +14,7 @@ import 'package:tanod_incentives/data/tanod_bridge.dart';
 
 // ID scan flow. MERGE: "Take photo" now runs the real scanners — PhilSys QR
 // when online, OCR photo scan when offline (Scanner/id_capture.dart).
-// Only the PhilSys National ID can be scanned. Other IDs are typed in by hand.
+// Gawad accepts the PhilSys National ID only. If the scan fails, the details can be typed in.
 // Steps: privacy notice (first time) → capture → reading → confirm.
 // Returns the list of tanods saved during this session.
 
@@ -40,8 +42,8 @@ class _ScanFlowPageState extends State<ScanFlowPage> with SingleTickerProviderSt
   bool privacyTicked = false;
   bool checked = false; // "I checked this against the original ID"
   bool manual = false; // typed by hand, no photo
-  String manualType = kIdTypes.firstWhere((t) => t != kScannableId); // for typed entries
-  String get idType => manual ? manualType : kScannableId;
+  String get idType => kScannableId; // PhilSys only, scanned or typed
+  Uint8List? _manualFront, _manualBack; // ID photos uploaded while typing details
 
   // MERGE: the real scan result (null when typed by hand)
   TanodPerson? scanned;
@@ -125,6 +127,8 @@ class _ScanFlowPageState extends State<ScanFlowPage> with SingleTickerProviderSt
   void _typeInstead() => setState(() {
         manual = true;
         scanned = null;
+        _manualFront = null;
+        _manualBack = null;
         _first.clear();
         _middle.clear();
         _last.clear();
@@ -133,7 +137,18 @@ class _ScanFlowPageState extends State<ScanFlowPage> with SingleTickerProviderSt
       });
 
   void _save({required bool next}) {
-    if (!_formKey.currentState!.validate()) return;
+    if (!_formKey.currentState!.validate()) {
+      notify(
+          context,
+          manual
+              ? tr('Fill in the missing details. The front and back photos of the PhilSys ID are required.',
+                    'Kumpletuhin ang kulang. Kailangan ang litrato ng harap at likod ng PhilSys ID.',
+                    'Kumpletuha ang kulang. Kinahanglan ang litrato sang atubangan kag likod sang PhilSys ID.')
+              : tr('Fill in the missing details.', 'Kumpletuhin ang kulang.', 'Kumpletuha ang kulang.'),
+          type: NotifyType.warning,
+          title: tr('Can’t save yet', 'Hindi pa ma-save', 'Indi pa ma-save'));
+      return;
+    }
     final s = scanned;
     final t = Tanod(
       _first.text.trim(),
@@ -143,8 +158,8 @@ class _ScanFlowPageState extends State<ScanFlowPage> with SingleTickerProviderSt
       // MERGE: keep what the scanner gave us (photos for the ID photocopy sheet)
       suffix: manual || s == null ? '' : s.suffix.trim().toUpperCase(),
       scannedAddress: manual || s == null ? '' : s.rawAddress,
-      idFront: manual ? null : s?.idFront,
-      idBack: manual ? null : s?.idBack,
+      idFront: manual ? _manualFront : s?.idFront,
+      idBack: manual ? _manualBack : s?.idBack,
     );
     final no = nextIndex.toString().padLeft(3, '0');
     setState(() => saved.add(t));
@@ -356,7 +371,7 @@ class _ScanFlowPageState extends State<ScanFlowPage> with SingleTickerProviderSt
                 style: sans(15, color: C.muted, h: 1.5)),
             const SizedBox(height: 22),
             point(Icons.text_fields_rounded, 'Only what the documents need',
-                'The name and ID type are kept. The address is only used to check the barangay. '
+                'The name is kept. The address is only used to check the barangay. '
                     'The PhilSys number and birth date are not kept.'),
             point(Icons.phone_android_rounded, 'Photos stay on this phone',
                 'ID photos are not uploaded unless your municipality approves it.'),
@@ -434,12 +449,12 @@ class _ScanFlowPageState extends State<ScanFlowPage> with SingleTickerProviderSt
           const Icon(Icons.info_outline, size: 18, color: C.blue),
           const SizedBox(width: 10),
           Expanded(
-            child: Text('Only the PhilSys ID can be scanned. Tanods with other IDs are typed in by hand.',
+            child: Text('Only the PhilSys National ID is accepted. If the scan doesn’t work, you can type the details.',
                 style: sans(14.5, color: const Color(0xFF1B3F68), h: 1.4)),
           ),
           TextButton(
             onPressed: _typeInstead,
-            child: Text('Other ID', style: sans(14.5, w: FontWeight.w700, color: C.blue)),
+            child: Text('Type details', style: sans(14.5, w: FontWeight.w700, color: C.blue)),
           ),
         ]),
       ),
@@ -467,7 +482,7 @@ class _ScanFlowPageState extends State<ScanFlowPage> with SingleTickerProviderSt
               child: TextButton.icon(
                 onPressed: _typeInstead,
                 icon: const Icon(Icons.keyboard_outlined, size: 18, color: C.blue),
-                label: Text('No PhilSys ID? Type the details instead',
+                label: Text('Scan not working? Type the details manually',
                     style: sans(14, w: FontWeight.w600, color: C.blue)),
               ),
             ),
@@ -602,19 +617,6 @@ class _ScanFlowPageState extends State<ScanFlowPage> with SingleTickerProviderSt
               ),
             ),
         ]),
-        if (manual) ...[
-          const SizedBox(height: 18),
-          const FieldLabel('ID presented'),
-          DropdownButtonFormField<String>(
-            initialValue: manualType,
-            isExpanded: true,
-            style: sans(15),
-            dropdownColor: Colors.white,
-            decoration: fieldDecoration('', Icons.badge_outlined),
-            items: kIdTypes.map((e) => DropdownMenuItem(value: e, child: Text(e))).toList(),
-            onChanged: (v) => setState(() => manualType = v ?? manualType),
-          ),
-        ],
         const SizedBox(height: 18),
         field(
           'last',
@@ -650,6 +652,21 @@ class _ScanFlowPageState extends State<ScanFlowPage> with SingleTickerProviderSt
             optional: true,
           ),
         ),
+        // Typed by hand: fixed PhilSys ID type + photos of the ID for the photocopy sheet
+        if (manual) ...[
+          const SizedBox(height: 14),
+          const PhilSysIdField(),
+          const SizedBox(height: 16),
+          IdPhotoPicker(
+            key: ValueKey('id-photos-$nextIndex'), // fresh for each tanod
+            front: _manualFront,
+            back: _manualBack,
+            onChanged: (f, b) {
+              _manualFront = f;
+              _manualBack = b;
+            },
+          ),
+        ],
         // MERGE: compliance check — the ID's address names another barangay
         if (!manual && livesElsewhere(_idBarangay, kBarangay)) ...[
           const SizedBox(height: 14),
@@ -710,7 +727,7 @@ class _ScanFlowPageState extends State<ScanFlowPage> with SingleTickerProviderSt
       const SizedBox(height: 6),
       Text(
         manual
-            ? 'Type the name exactly as it appears on their ID.'
+            ? 'Type the name exactly as it appears on their PhilSys ID.'
             : 'Compare each field with the ID and fix anything that was read wrong.',
         style: sans(15, color: C.muted, h: 1.5),
       ),

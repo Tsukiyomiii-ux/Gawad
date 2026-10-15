@@ -17,8 +17,6 @@ import 'dart:typed_data';
 import 'package:tanod_incentives/theme.dart';
 import 'package:tanod_incentives/data/demo_data.dart';
 import 'package:tanod_incentives/data/doc_kind.dart';
-import 'package:tanod_incentives/data/demo_tanods.dart';
-
 
 const kReviewerName = 'Liza M. Tolentino';
 const kReviewerFirstName = 'Liza';
@@ -171,7 +169,7 @@ List<Tanod> _makeTanods(int count, int seed) {
     'Aguirre', 'Bautista', 'Castillo', 'Dalisay', 'Espinosa', 'Fuentes', 'Garcia', 'Hilado', 'Ilagan', 'Javier',
     'Lacson', 'Magbanua', 'Natividad', 'Ortiz', 'Pama', 'Quimpo', 'Robles', 'Sison', 'Tabares', 'Villanueva',
   ];
-  const ids = ['PhilSys National ID', "Voter's ID", 'Barangay ID', 'PhilSys National ID', "Driver's License"];
+  const ids = [kIdType]; // PhilSys only
   return [
     for (var i = 0; i < count; i++)
       Tanod(
@@ -252,8 +250,7 @@ List<BrgyRecord> _barangays() {
     position: kRepPosition,
     captain: kCaptain,
     quota: kQuota,
-    tanods: demoTanods(), // TEMP: dummy tanods for testing
-    // tanods: [], // filled only from scanned / typed IDs
+    tanods: [], // filled only from scanned / typed IDs
     files: filesWith(0),
     status: BrgyStatus.preparing,
     updated: 'Oct 14',

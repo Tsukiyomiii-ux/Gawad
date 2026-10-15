@@ -8,8 +8,10 @@ import 'package:tanod_incentives/widgets/app_field.dart';
 import 'package:tanod_incentives/Templates/gawad_pdf.dart'; // MERGE: real PDFs
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
-import 'package:printing/printing.dart';
+import 'package:printing/printing.dart'; // PdfPreview for viewing an uploaded PDF
 import 'package:tanod_incentives/widgets/notify.dart'; // top pop-ups
+import 'package:tanod_incentives/widgets/save_file.dart'; // direct download
+import 'package:tanod_incentives/widgets/id_fields.dart'; // PhilSys ID field
 
 export 'package:tanod_incentives/data/doc_kind.dart';
 
@@ -137,7 +139,8 @@ Future<void> shareSignedCopy(BuildContext context, BrgyRecord rec, DocKind k) as
     pdfBytes = await doc.save();
   }
   final name = signedFileName(rec, k).replaceAll(RegExp(r'\.jpg$'), '.pdf');
-  await Printing.sharePdf(bytes: pdfBytes, filename: name);
+  if (!context.mounted) return;
+  await downloadPdfBytes(context, pdfBytes, name); // straight to Downloads
 }
 
 // Opens a document's backup copy (the uploaded signed paper). When nothing is
@@ -463,6 +466,35 @@ class _DocumentsViewState extends State<DocumentsView> {
                     ]),
                   ),
           ),
+          // Footer: Save changes
+          const Divider(height: 1, color: C.line),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+            child: Row(children: [
+              Expanded(
+                child: Text(
+                  tr('Changes show in the preview right away.', 'Makikita agad sa preview ang binago.', 'Makita dayon sa preview ang ginbag-o.'),
+                  overflow: TextOverflow.ellipsis,
+                  style: sans(14, color: C.muted),
+                ),
+              ),
+              const SizedBox(width: 12),
+              FilledButton.icon(
+                style: FilledButton.styleFrom(backgroundColor: C.navy, foregroundColor: Colors.white, minimumSize: const Size(0, 46)),
+                onPressed: () {
+                  Navigator.pop(ctx);
+                  notify(
+                    context,
+                    tr('${k.title} saved. All four documents use the same list.', 'Na-save ang ${k.title}. Iisang listahan ang gamit ng apat na dokumento.',
+                        'Na-save ang ${k.title}. Isa lang ka listahan ang gamit sang apat ka dokumento.'),
+                    title: tr('Changes saved', 'Na-save ang pagbabago', 'Na-save ang pagbag-o'),
+                  );
+                },
+                icon: const Icon(Icons.save_outlined, size: 18),
+                label: Text(tr('Save changes', 'I-save ang pagbabago', 'I-save ang pagbag-o')),
+              ),
+            ]),
+          ),
         ]);
       }),
     );
@@ -553,7 +585,7 @@ class _DocumentsViewState extends State<DocumentsView> {
                   Expanded(
                     child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                       Text(tanods[i].fullName, overflow: TextOverflow.ellipsis, style: sans(15, w: FontWeight.w600)),
-                      Text(tanods[i].confirmed ? tanods[i].idType : '${tanods[i].idType} · ${tr('check spelling', 'suriin ang baybay', 'usisaa ang spelling')}',
+                      Text(tanods[i].confirmed ? tr('Name checked', 'Nasuri ang pangalan', 'Nausisa ang ngalan') : tr('Check spelling', 'Suriin ang baybay', 'Usisaa ang spelling'),
                           overflow: TextOverflow.ellipsis,
                           style: sans(13.5, color: tanods[i].confirmed ? C.muted : const Color(0xFF7A5B00))),
                     ]),
@@ -573,7 +605,6 @@ class _DocumentsViewState extends State<DocumentsView> {
     final middle = TextEditingController(text: t.middle);
     final last = TextEditingController(text: t.last);
     final formKey = GlobalKey<FormState>();
-    var idType = kIdTypes.contains(t.idType) ? t.idType : kIdTypes.first;
 
     final action = await showDialog<String>(
       context: ctx,
@@ -622,16 +653,7 @@ class _DocumentsViewState extends State<DocumentsView> {
                   validator: (v) => (v ?? '').trim().isEmpty ? tr('Enter the last name.', 'Ilagay ang apelyido.', 'Isulat ang apelyido.') : null,
                 ),
                 const SizedBox(height: 12),
-                FieldLabel(tr('ID type', 'Uri ng ID', 'Klase sang ID')),
-                DropdownButtonFormField<String>(
-                  initialValue: idType,
-                  isExpanded: true,
-                  style: sans(15),
-                  dropdownColor: Colors.white,
-                  decoration: fieldDecoration('', Icons.badge_outlined),
-                  items: kIdTypes.map((e) => DropdownMenuItem(value: e, child: Text(e))).toList(),
-                  onChanged: (v) => idType = v ?? idType,
-                ),
+                const PhilSysIdField(), // fixed: PhilSys only
               ]),
             ),
           ),
@@ -663,9 +685,13 @@ class _DocumentsViewState extends State<DocumentsView> {
         ..first = first.text.trim()
         ..middle = middle.text.trim().toUpperCase()
         ..last = last.text.trim()
-        ..idType = idType
+        ..idType = kIdType
         ..confirmed = true;
       changed();
+      if (mounted) {
+        notify(context, tr('Saved ${t.fullName}.', 'Na-save si ${t.fullName}.', 'Na-save si ${t.fullName}.'),
+            title: tr('Tanod updated', 'Na-update ang tanod', 'Na-update ang tanod'));
+      }
     } else if (action == 'remove') {
       final name = t.fullName;
       tanods.removeAt(i);

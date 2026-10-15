@@ -3,7 +3,6 @@
 
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
-import 'package:printing/printing.dart';
 
 import 'package:tanod_incentives/theme.dart';
 import 'package:tanod_incentives/data/demo_data.dart';
@@ -15,6 +14,7 @@ import 'masterlist_template.dart';
 import 'certification_template.dart';
 import 'id_photocopy.dart';
 import 'package:tanod_incentives/widgets/notify.dart'; // top pop-ups
+import 'package:tanod_incentives/widgets/save_file.dart'; // direct download
 
 Future<Uint8List> buildOfficialPdf(BrgyRecord rec, DocKind kind) {
   final people = personsFor(rec);
@@ -40,31 +40,13 @@ Future<Uint8List> buildOfficialPdf(BrgyRecord rec, DocKind kind) {
 
 String officialPdfName(BrgyRecord rec, DocKind kind) => '${kind.title} - Brgy ${rec.name} - $kYear.pdf';
 
-/// Opens the filled PDF with print / share / save buttons.
+/// Downloads the filled PDF straight away (no preview, no print/share screen).
+/// Name kept as showOfficialPdf so every existing button still works.
 Future<void> showOfficialPdf(BuildContext context, BrgyRecord rec, DocKind kind) {
   if (rec.tanods.isEmpty) {
     notify(context, tr('Add at least one tanod first.', 'Magdagdag muna ng kahit isang tanod.', 'Palihog magdugang anay sang bisan isa ka tanod.'),
         type: NotifyType.warning, title: tr('No tanods yet', 'Wala pang tanod', 'Wala pa sang tanod'));
     return Future.value();
   }
-  return Navigator.of(context).push(
-    MaterialPageRoute(
-      builder: (_) => Scaffold(
-        appBar: AppBar(
-          title: Text('${kind.title} · Brgy. ${rec.name}'),
-          backgroundColor: C.navy,
-          foregroundColor: Colors.white,
-        ),
-        body: PdfPreview(
-          build: (_) => buildOfficialPdf(rec, kind),
-          pdfFileName: officialPdfName(rec, kind),
-          canChangePageFormat: false,
-          canChangeOrientation: false,
-          canDebug: false,
-          allowPrinting: true,
-          allowSharing: true,
-        ),
-      ),
-    ),
-  );
+  return downloadPdf(context, () => buildOfficialPdf(rec, kind), officialPdfName(rec, kind));
 }

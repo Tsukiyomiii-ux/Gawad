@@ -19,28 +19,32 @@ Tanod _withPhotos(Tanod t) => t
 
 List<Tanod> demoTanods() => [
       // Completed: name checked + ID photos (8)
-      _withPhotos(Tanod('Rodel', 'A', 'Gonzaga', 'PhilSys National ID')),
-      _withPhotos(Tanod('Ernesto', 'B', 'Villanueva', 'PhilSys National ID')),
-      _withPhotos(Tanod('Jonathan', 'D', 'Tupas', 'PhilSys National ID')),
-      _withPhotos(Tanod('Arnel', 'S', 'Caballero', "Driver's License")),
-      _withPhotos(Tanod('Romeo', 'L', 'Sorongon', 'PhilSys National ID')),
-      _withPhotos(Tanod('Danilo', 'M', 'Belleza', 'Postal ID')),
-      _withPhotos(Tanod('Noel', 'R', 'Tolentino', 'PhilSys National ID')),
-      _withPhotos(Tanod('Jessie', '', 'Alcantara', 'PhilSys National ID')), // no middle initial: still complete
+      _withPhotos(Tanod('Rodel', 'A', 'Gonzaga', kIdType)),
+      _withPhotos(Tanod('Ernesto', 'B', 'Villanueva', kIdType)),
+      _withPhotos(Tanod('Jonathan', 'D', 'Tupas', kIdType)),
+      _withPhotos(Tanod('Arnel', 'S', 'Caballero', kIdType)),
+      _withPhotos(Tanod('Romeo', 'L', 'Sorongon', kIdType)),
+      _withPhotos(Tanod('Danilo', 'M', 'Belleza', kIdType)),
+      _withPhotos(Tanod('Noel', 'R', 'Tolentino', kIdType)),
+      _withPhotos(Tanod('Jessie', '', 'Alcantara', kIdType)), // no middle initial: still complete
 
       // Misspelled only: has photos, name not checked yet (4)
-      _withPhotos(Tanod('Mario', 'C', 'Peñaflor', 'PhilSys National ID', confirmed: false)),
-      _withPhotos(Tanod('Rogelio', 'P', 'Jaleco', "Voter's ID", confirmed: false)),
-      _withPhotos(Tanod('Edgar', 'G', 'Lamasan', 'PhilSys National ID', confirmed: false)),
-      _withPhotos(Tanod('Wilfredo', 'O', 'Dioso', 'Barangay ID', confirmed: false)),
+      _withPhotos(Tanod('Mario', 'C', 'Peñaflor', kIdType, confirmed: false)),
+      _withPhotos(Tanod('Rogelio', 'P', 'Jaleco', kIdType, confirmed: false)),
+      _withPhotos(Tanod('Edgar', 'G', 'Lamasan', kIdType, confirmed: false)),
+      _withPhotos(Tanod('Wilfredo', 'O', 'Dioso', kIdType, confirmed: false)),
 
       // Missing inputs only: name checked, but no ID photos (4)
-      Tanod('Felix', 'T', 'Gallego', 'Senior Citizen ID'),
-      Tanod('Ricardo', 'V', 'Panes', 'Barangay ID'),
-      Tanod('Leonardo', 'E', 'Hechanova', "Driver's License"),
-      Tanod('Alfredo', 'J', 'Moreno', "Voter's ID"),
+      Tanod('Felix', 'T', 'Gallego', kIdType),
+      Tanod('Ricardo', 'V', 'Panes', kIdType),
+      Tanod('Leonardo', 'E', 'Hechanova', kIdType),
+      Tanod('Alfredo', 'J', 'Moreno', kIdType),
 
-      // Both: name not checked AND no ID photos (2)
-      Tanod('Ramil', 'K', 'Segovia', "Voter's ID", confirmed: false),
-      Tanod('Virgilio', 'N', 'Dela Peña', 'Postal ID', confirmed: false),
+      // Name not checked AND no ID photos (2)
+      Tanod('Ramil', 'K', 'Segovia', kIdType, confirmed: false),
+      Tanod('Virgilio', 'N', 'Dela Peña', kIdType, confirmed: false),
+
+      // Duplicates: same first + last name as someone above (2)
+      Tanod('Rodel', '', 'Gonzaga', kIdType), // same as 001 Rodel A. Gonzaga
+      Tanod('Noel', 'R', 'Tolentino', kIdType, confirmed: false), // same as 007 Noel R. Tolentino
     ];

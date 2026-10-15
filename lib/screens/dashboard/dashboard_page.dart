@@ -7,6 +7,7 @@ import 'package:tanod_incentives/data/store.dart';
 import 'package:tanod_incentives/widgets/app_field.dart';
 import 'package:tanod_incentives/widgets/chat_thread.dart';
 import 'package:tanod_incentives/widgets/upload_sheet.dart';
+import 'package:tanod_incentives/widgets/id_fields.dart'; // PhilSys ID field + ID photo picker
 import 'package:tanod_incentives/widgets/notify.dart'; // top pop-ups + "Are you sure?"
 import 'package:tanod_incentives/screens/auth/auth_page.dart';
 import 'package:tanod_incentives/screens/dashboard/documents_view.dart';
@@ -308,13 +309,8 @@ class _DashboardPageState extends State<DashboardPage> {
       NotifyType.warning, tr('List locked', 'Naka-lock', 'Naka-lock'));
 
   // MERGE: opens the real, filled PDF (print / share / save)
-  void _downloadPdf(DocKind k) {
-    if (tanods.isNotEmpty) {
-      _toast(tr('Opening the ${k.title}…', 'Binubuksan ang ${k.title}…', 'Ginabuksan ang ${k.title}…'), NotifyType.info,
-          tr('Preparing PDF', 'Inihahanda ang PDF', 'Ginahanda ang PDF'));
-    }
-    showOfficialPdf(context, rec, k);
-  }
+  // Downloads the filled PDF directly (pop-ups say "Downloading…" then where it was saved)
+  void _downloadPdf(DocKind k) => showOfficialPdf(context, rec, k);
 
   Future<void> _upload(DocKind k) async {
     final f = rec.files[k]!;
@@ -396,7 +392,7 @@ class _DashboardPageState extends State<DashboardPage> {
     final middle = TextEditingController();
     final last = TextEditingController();
     final formKey = GlobalKey<FormState>();
-    var idType = kIdTypes.first;
+    Uint8List? idFront, idBack; // optional ID photos from the picker
 
     final added = await showDialog<Tanod>(
       context: context,
@@ -442,16 +438,13 @@ class _DashboardPageState extends State<DashboardPage> {
                   validator: (v) => (v ?? '').trim().isEmpty ? tr('Enter the last name.', 'Ilagay ang apelyido.', 'Palihog isulat ang apelyido.') : null,
                 ),
                 const SizedBox(height: 14),
-                Align(alignment: Alignment.centerLeft, child: FieldLabel(tr('ID type', 'Uri ng ID', 'Klase sang ID'))),
-                DropdownButtonFormField<String>(
-                  initialValue: idType,
-                  isExpanded: true,
-                  style: sans(15),
-                  dropdownColor: Colors.white,
-                  decoration: fieldDecoration('', Icons.badge_outlined),
-                  items: kIdTypes.map((e) => DropdownMenuItem(value: e, child: Text(e))).toList(),
-                  onChanged: (v) => idType = v ?? idType,
-                ),
+                const PhilSysIdField(), // fixed: PhilSys only
+                const SizedBox(height: 16),
+                // Photo of the ID for the ID photocopy sheet (take or upload)
+                IdPhotoPicker(onChanged: (f, b) {
+                  idFront = f;
+                  idBack = b;
+                }),
               ]),
             ),
           ),
@@ -465,10 +458,19 @@ class _DashboardPageState extends State<DashboardPage> {
           FilledButton(
             style: FilledButton.styleFrom(backgroundColor: C.navy, foregroundColor: Colors.white),
             onPressed: () {
-              if (!formKey.currentState!.validate()) return;
+              // Also checks the ID photo flag: no front + back photo = can't add
+              if (!formKey.currentState!.validate()) {
+                notify(ctx, tr('Fill in the missing details. The front and back photos of the PhilSys ID are required.',
+                    'Kumpletuhin ang kulang. Kailangan ang litrato ng harap at likod ng PhilSys ID.',
+                    'Kumpletuha ang kulang. Kinahanglan ang litrato sang atubangan kag likod sang PhilSys ID.'),
+                    type: NotifyType.warning, title: tr('Can’t add yet', 'Hindi pa maidagdag', 'Indi pa madugang'));
+                return;
+              }
               Navigator.pop(
                 ctx,
-                Tanod(first.text.trim(), middle.text.trim().toUpperCase(), last.text.trim(), idType),
+                Tanod(first.text.trim(), middle.text.trim().toUpperCase(), last.text.trim(), kIdType)
+                  ..idFront = idFront
+                  ..idBack = idBack,
               );
             },
             child: Text(tr('Add tanod', 'Idagdag', 'Idugang ang tanod')),
@@ -850,8 +852,8 @@ class _DashboardPageState extends State<DashboardPage> {
     } else if (tanods.isEmpty) {
       icon = Icons.document_scanner_outlined;
       title = tr('Add your first tanod', 'Idagdag ang unang tanod', 'Idugang ang una nga tanod');
-      body = tr('Scan their PhilSys ID, or type their details if they have a different ID.',
-          'I-scan ang kanilang PhilSys ID, o i-type ang detalye kung iba ang kanilang ID.', 'Pwede ninyo i-scan ang ila PhilSys ID, ukon i-type ang ila detalye kon lain ang ila ID.');
+      body = tr('Scan their PhilSys ID. If the scan doesn’t work, type their details manually.',
+          'I-scan ang kanilang PhilSys ID. Kung hindi gumana ang scan, i-type nang mano-mano ang detalye.', 'I-scan ang ila PhilSys ID. Kon indi mag-ubra ang scan, i-type na lang ang ila detalye.');
       actions = [
         _bigButton(tr('Scan PhilSys ID', 'I-scan ang PhilSys ID', 'I-scan ang PhilSys ID'), Icons.document_scanner_outlined, _scanId),
         _bigButton(tr('Type details', 'I-type ang detalye', 'I-type ang detalye'), Icons.keyboard_outlined, _addManually, outlined: true),
@@ -1100,7 +1102,7 @@ class _DashboardPageState extends State<DashboardPage> {
           ),
           onPressed: _addManually,
           icon: const Icon(Icons.keyboard_outlined, size: 18),
-          label: Text(tr('Type details (other ID)', 'I-type (ibang ID)', 'I-type ang detalye (iban nga ID)')),
+          label: Text(tr('Type details manually', 'I-type nang mano-mano', 'I-type ang detalye')),
         ),
       ]),
     ]);
@@ -1409,8 +1411,11 @@ class _DashboardPageState extends State<DashboardPage> {
   // Indexes of the other tanods with the same name
   List<int> _duplicatesOf(Tanod t) =>
       [for (var i = 0; i < tanods.length; i++) if (!identical(tanods[i], t) && tanods[i].nameKey == t.nameKey) i];
-  // Completed: name checked and not a duplicate.
-  bool _isCompleted(Tanod t) => !_isMisspelled(t) && !_isDuplicate(t);
+  // Missing inputs: something the documents need isn't on file yet (for now: the ID photos).
+  // TODO(backend): when the database is ready, the photos/fields come from there; this check stays the same.
+  bool _isMissingInputs(Tanod t) => _missingParts(t).isNotEmpty;
+  // Completed: name checked, not a duplicate, and nothing missing.
+  bool _isCompleted(Tanod t) => !_isMisspelled(t) && !_isDuplicate(t) && !_isMissingInputs(t);
 
   // "View" buttons on the tiles: filter the Tanods list underneath
   void _viewCompleted() => _setFilter(_TanodFilter.completed);
@@ -1428,10 +1433,22 @@ class _DashboardPageState extends State<DashboardPage> {
     final n = tanods.where(_matchesFilter).length;
     _toast(
       tr('$n tanod${n == 1 ? '' : 's'} shown: $_filterLabel.', '$n tanod ang ipinapakita: $_filterLabel.', '$n ka tanod ang ginapakita: $_filterLabel.'),
-      n == 0 ? NotifyType.warning : NotifyType.info,
-      tr('Filter applied', 'Na-filter', 'Na-filter'),
+      // Same colour as the tile: Completed = blue, Misspelled = yellow, Duplicates = red
+      switch (f) {
+        _TanodFilter.misspelled => NotifyType.warning,
+        _TanodFilter.duplicate => NotifyType.error,
+        _ => NotifyType.info,
+      },
+      _filterLabel,
     );
   }
+
+  // Tile colours: Completed = blue, Misspelled = yellow, Duplicates = red
+  Color get _filterColor => switch (_filter) {
+        _TanodFilter.misspelled => C.yellowDark,
+        _TanodFilter.duplicate => C.red,
+        _ => C.blue,
+      };
 
   bool _matchesFilter(Tanod t) => switch (_filter) {
         _TanodFilter.all => true,
@@ -1452,24 +1469,29 @@ class _DashboardPageState extends State<DashboardPage> {
     final completed = tanods.where(_isCompleted).length;
     final misspelled = tanods.where(_isMisspelled).length;
     final duplicates = tanods.where(_isDuplicate).length;
+    final missingInputs = tanods.where((t) => !_isMisspelled(t) && !_isDuplicate(t) && _isMissingInputs(t)).length;
     final tiles = [
       _StatTile(
         icon: Icons.task_alt_rounded,
-        tint: C.green,
+        tint: C.blue, // Completed = blue
         value: '$completed / $total',
         label: tr('Completed tanods', 'Kumpletong tanod', 'Kompleto nga tanod'),
-        note: tr('Name checked and listed only once', 'Nasuri ang pangalan at isang beses lang nakalista',
-            'Nausisa ang ngalan kag makaisa lang nalista'),
-        help: tr('A tanod is completed when the name was checked against the ID and the same person '
-                'is not listed twice.',
-            'Kumpleto ang tanod kapag nasuri na ang pangalan laban sa ID at hindi dalawang beses nakalista.',
-            'Kompleto ang tanod kon nausisa na ang ngalan suno sa ID kag indi duha ka beses nalista.'),
+        note: missingInputs == 0
+            ? tr('Name checked, listed once, ID photos on file', 'Nasuri ang pangalan, isang beses nakalista, may litrato ng ID',
+                'Nausisa ang ngalan, makaisa nalista, may litrato sang ID')
+            : tr('$missingInputs still missing ID photos', '$missingInputs ang kulang pa sa litrato ng ID', '$missingInputs ang kulang pa sang litrato sang ID'),
+        help: tr('A tanod is completed when the name was checked against the ID, the same person is not listed twice, '
+                'and the front and back ID photos are on file. Tanods without ID photos show “Missing inputs”.',
+            'Kumpleto ang tanod kapag nasuri na ang pangalan laban sa ID, hindi dalawang beses nakalista, at may litrato ng harap at likod ng ID. '
+                '“Kulang” ang lalabas kung wala pang litrato ng ID.',
+            'Kompleto ang tanod kon nausisa na ang ngalan suno sa ID, indi duha ka beses nalista, kag may litrato sang atubangan kag likod sang ID. '
+                '“Kulang” ang makita kon wala pa sang litrato sang ID.'),
         progress: total == 0 ? 0 : completed / total,
         onView: _viewCompleted,
       ),
       _StatTile(
         icon: Icons.spellcheck_rounded,
-        tint: misspelled == 0 ? C.green : C.yellowDark,
+        tint: C.yellowDark, // Misspelled = yellow
         value: '$misspelled',
         label: tr('Misspelled information', 'Maling baybay', 'Sala nga spelling'),
         note: misspelled == 0
@@ -1478,8 +1500,8 @@ class _DashboardPageState extends State<DashboardPage> {
         onView: _viewMisspelled,
       ),
       _StatTile(
-        icon: duplicates == 0 ? Icons.verified_outlined : Icons.people_alt_outlined,
-        tint: duplicates == 0 ? C.green : C.red,
+        icon: Icons.people_alt_outlined,
+        tint: C.red, // Duplicates = red
         value: '$duplicates',
         label: tr('Duplicates', 'Doble', 'Doble'),
         note: duplicates == 0
@@ -1758,28 +1780,32 @@ class _DashboardPageState extends State<DashboardPage> {
                 if (actions) SizedBox(width: 230, child: Text(tr('ACTION', 'AKSYON', 'AKSYON'), textAlign: TextAlign.center, style: _th)),
               ]),
             ),
-          // Filter bar: what is shown + Clear
+          // Filter bar: what is shown + Clear (same colour as the tile that was tapped)
           if (filtered)
             Container(
               margin: const EdgeInsets.only(bottom: 10),
               padding: const EdgeInsets.fromLTRB(14, 6, 6, 6),
-              decoration: BoxDecoration(color: C.blueSoft, borderRadius: BorderRadius.circular(10)),
+              decoration: BoxDecoration(
+                color: _filterColor.withValues(alpha: .1),
+                border: Border.all(color: _filterColor.withValues(alpha: .35)),
+                borderRadius: BorderRadius.circular(10),
+              ),
               child: Row(children: [
-                const Icon(Icons.filter_list_rounded, size: 18, color: C.blue),
+                Icon(Icons.filter_list_rounded, size: 18, color: _filterColor),
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(
                     tr('Showing: $_filterLabel (${matching.length} of ${tanods.length})',
                         'Ipinapakita: $_filterLabel (${matching.length} sa ${tanods.length})',
                         'Ginapakita: $_filterLabel (${matching.length} sa ${tanods.length})'),
-                    style: sans(14.5, w: FontWeight.w600, color: const Color(0xFF1B3F68)),
+                    style: sans(14.5, w: FontWeight.w600, color: C.ink),
                   ),
                 ),
                 TextButton.icon(
-                  style: TextButton.styleFrom(foregroundColor: C.blue, minimumSize: const Size(0, 40)),
+                  style: TextButton.styleFrom(foregroundColor: _filterColor, minimumSize: const Size(0, 40)),
                   onPressed: _clearFilter,
                   icon: const Icon(Icons.close_rounded, size: 18),
-                  label: Text(tr('Clear', 'Alisin', 'Kuhaa'), style: sans(14.5, w: FontWeight.w700, color: C.blue)),
+                  label: Text(tr('Clear', 'Alisin', 'Kuhaa'), style: sans(14.5, w: FontWeight.w700, color: _filterColor)),
                 ),
               ]),
             ),
@@ -1813,7 +1839,7 @@ class _DashboardPageState extends State<DashboardPage> {
               ),
               onPressed: locked ? null : _addManually,
               icon: const Icon(Icons.keyboard_outlined, size: 18),
-              label: Text(tr('Type details (other ID)', 'I-type (ibang ID)', 'I-type ang detalye (iban nga ID)'), style: sans(15, w: FontWeight.w600, color: C.navy)),
+              label: Text(tr('Type details', 'I-type ang detalye', 'I-type ang detalye'), style: sans(15, w: FontWeight.w600, color: C.navy)),
             ),
           ]),
         ]);
@@ -1858,10 +1884,10 @@ class _DashboardPageState extends State<DashboardPage> {
         content: SizedBox(
           width: 420,
           child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
-            if (!misspelled && !duplicate)
-              item(Icons.check_circle, C.green,
-                  tr('Completed. Name checked and listed once.', 'Kumpleto. Nasuri ang pangalan at isang beses nakalista.',
-                      'Kompleto. Nausisa ang ngalan kag makaisa nalista.')),
+            if (!misspelled && !duplicate && missing.isEmpty)
+              item(Icons.check_circle, C.blue,
+                  tr('Completed. Name checked, listed once, and ID photos on file.', 'Kumpleto. Nasuri ang pangalan, isang beses nakalista, at may litrato ng ID.',
+                      'Kompleto. Nausisa ang ngalan, makaisa nalista, kag may litrato sang ID.')),
             if (duplicate) ...[
               Text(tr('Same name as:', 'Kapareho ng pangalan ni:', 'Pareho sang ngalan ni:'),
                   style: sans(15, w: FontWeight.w700, color: C.red)),
@@ -1874,12 +1900,12 @@ class _DashboardPageState extends State<DashboardPage> {
                   tr('Name not checked yet. Compare it with the original ID, then save.',
                       'Hindi pa nasusuri ang pangalan. Ikumpara sa orihinal na ID, saka i-save.',
                       'Wala pa nausisa ang ngalan. Palihog ikumpara sa orihinal nga ID, dayon i-save.')),
-            // Not part of the status, but useful: ID photos for the photocopy sheet
+            // Missing inputs: what still has to be added (ID photos for the photocopy sheet)
             if (missing.isNotEmpty) ...[
               const SizedBox(height: 4),
-              Text(tr('Not on file yet:', 'Wala pa:', 'Wala pa:'), style: sans(14, w: FontWeight.w700, color: C.muted)),
-              const SizedBox(height: 6),
-              for (final m in missing) item(Icons.info_outline, C.muted, m),
+              Text(tr('Missing inputs:', 'Kulang pa:', 'Kulang pa:'), style: sans(15, w: FontWeight.w700, color: const Color(0xFF475569))),
+              const SizedBox(height: 8),
+              for (final m in missing) item(Icons.add_a_photo_outlined, const Color(0xFF475569), m),
             ],
           ]),
         ),
@@ -1958,12 +1984,14 @@ class _DashboardPageState extends State<DashboardPage> {
         ]),
       );
 
-  // Same three statuses as the Overview tiles
+  // Statuses, most serious first: Duplicate (red) > Check spelling (yellow) > Missing inputs (grey) > Completed (blue)
   Widget _statusPill(Tanod t) => _isDuplicate(t)
       ? _pill(tr('Duplicate', 'Doble', 'Doble'), const Color(0xFFFDF0EE), C.red, icon: Icons.people_alt_outlined)
       : _isMisspelled(t)
           ? _pill(tr('Check spelling', 'Suriin ang baybay', 'Usisaa ang spelling'), const Color(0xFFFFF4CC), const Color(0xFF7A5B00), icon: Icons.error_outline)
-          : _pill(tr('Completed', 'Kumpleto', 'Kompleto'), C.greenSoft, const Color(0xFF14583D), icon: Icons.check);
+          : _isMissingInputs(t)
+              ? _pill(tr('Missing inputs', 'Kulang', 'Kulang'), const Color(0xFFEDF1F5), const Color(0xFF475569), icon: Icons.add_a_photo_outlined)
+              : _pill(tr('Completed', 'Kumpleto', 'Kompleto'), C.blueSoft, C.blue, icon: Icons.check);
 
   Widget _avatar(Tanod t) => CircleAvatar(
         radius: 17,
@@ -2051,7 +2079,6 @@ class _DashboardPageState extends State<DashboardPage> {
     final middle = TextEditingController(text: t.middle);
     final last = TextEditingController(text: t.last);
     final formKey = GlobalKey<FormState>();
-    var idType = kIdTypes.contains(t.idType) ? t.idType : kIdTypes.first;
     final signedAlready = rec.files.values.any((f) => f.uploaded);
 
     final saved = await showDialog<bool>(
@@ -2117,16 +2144,7 @@ class _DashboardPageState extends State<DashboardPage> {
                   validator: (v) => (v ?? '').trim().isEmpty ? tr('Enter the last name.', 'Ilagay ang apelyido.', 'Palihog isulat ang apelyido.') : null,
                 ),
                 const SizedBox(height: 14),
-                FieldLabel(tr('ID type', 'Uri ng ID', 'Klase sang ID')),
-                DropdownButtonFormField<String>(
-                  initialValue: idType,
-                  isExpanded: true,
-                  style: sans(15),
-                  dropdownColor: Colors.white,
-                  decoration: fieldDecoration('', Icons.badge_outlined),
-                  items: kIdTypes.map((e) => DropdownMenuItem(value: e, child: Text(e))).toList(),
-                  onChanged: (v) => idType = v ?? idType,
-                ),
+                const PhilSysIdField(), // fixed: PhilSys only
               ]),
             ),
           ),
@@ -2161,14 +2179,13 @@ class _DashboardPageState extends State<DashboardPage> {
     if (saved == true && mounted) {
       final changedName = t.first != first.text.trim() ||
           t.middle != middle.text.trim().toUpperCase() ||
-          t.last != last.text.trim() ||
-          t.idType != idType;
+          t.last != last.text.trim();
       setState(() {
         t
           ..first = first.text.trim()
           ..middle = middle.text.trim().toUpperCase()
           ..last = last.text.trim()
-          ..idType = idType
+          ..idType = kIdType
           ..confirmed = true;
         if (changedName) {
           _markChanged();
@@ -2473,22 +2490,7 @@ class _DashboardPageState extends State<DashboardPage> {
           row('Barangay', 'Brgy. $kBarangay, $kMunicipality'),
           row(tr('Year', 'Taon', 'Tuig'), '$kYear'),
           row(tr('Tanod limit', 'Limit ng tanod', 'Limit sang tanod'), tr('$kQuota (set by OPPDC)', '$kQuota (itinakda ng OPPDC)', '$kQuota (gintakda sang OPPDC)')),
-          const SizedBox(height: 10),
-          Align(
-            alignment: Alignment.centerLeft,
-            child: OutlinedButton.icon(
-              style: OutlinedButton.styleFrom(
-                foregroundColor: C.red,
-                side: const BorderSide(color: Color(0xFFF0C7C3), width: 1.5),
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-                minimumSize: const Size(0, 48),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-              ),
-              onPressed: _signOut,
-              icon: const Icon(Icons.logout, size: 18),
-              label: Text(tr('Sign out', 'Mag-sign out', 'Mag-sign out'), style: sans(15, w: FontWeight.w600, color: C.red)),
-            ),
-          ),
+          // Sign out lives in the side menu / profile menu, not here
         ]),
       ),
       const SizedBox(height: 20),
@@ -2532,8 +2534,8 @@ class _DashboardPageState extends State<DashboardPage> {
       (
         Icons.document_scanner_outlined,
         tr('Add each tanod once', 'Ilagay ang bawat tanod nang isang beses', 'Idugang ang kada tanod sing makaisa'),
-        tr('Scan their PhilSys ID. If they have a different ID, type their details instead.',
-            'I-scan ang kanilang PhilSys ID. Kung iba ang ID nila, i-type na lang ang detalye.', 'Palihog i-scan ang ila PhilSys ID. Kon lain ang ila ID, pwede i-type na lang ang ila detalye.'),
+        tr('Scan their PhilSys ID. Only the PhilSys ID is accepted. If the scan doesn’t work, type their details manually.',
+            'I-scan ang kanilang PhilSys ID. PhilSys ID lang ang tinatanggap. Kung hindi gumana ang scan, i-type nang mano-mano ang detalye.', 'Palihog i-scan ang ila PhilSys ID. PhilSys ID lang ang ginabaton. Kon indi mag-ubra ang scan, i-type na lang ang ila detalye.'),
       ),
       (
         Icons.spellcheck_rounded,

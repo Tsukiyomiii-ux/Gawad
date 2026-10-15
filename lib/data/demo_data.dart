@@ -18,14 +18,9 @@ const kYear = 2026;
 const kQuota = 20; // allowed number of tanods, set by OPPDC
 const kAmountEach = 1000; // pesos per tanod (Ordinance 2020-240, Sec. 7(C))
 
-const kIdTypes = [
-  'PhilSys National ID',
-  "Voter's ID",
-  "Driver's License",
-  'Barangay ID',
-  'Postal ID',
-  'Senior Citizen ID',
-];
+// Gawad accepts the PhilSys National ID only.
+const kIdType = 'PhilSys National ID';
+const kIdTypes = [kIdType]; // kept so older code still compiles
 
 class Tanod {
   String first, middle, last, idType;
