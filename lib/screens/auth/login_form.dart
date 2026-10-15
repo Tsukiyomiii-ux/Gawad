@@ -6,6 +6,8 @@ import 'package:tanod_incentives/widgets/yellow_button.dart';
 import 'package:tanod_incentives/screens/dashboard/dashboard_page.dart';
 import 'package:tanod_incentives/screens/municipal/municipal_page.dart';
 import 'package:tanod_incentives/data/demo_data.dart';
+import 'package:tanod_incentives/data/cloud.dart'; // FIREBASE sign-in
+import 'package:tanod_incentives/widgets/notify.dart';
 
 // ---------------- Login ----------------
 class LoginForm extends StatefulWidget {
@@ -20,6 +22,7 @@ class _LoginFormState extends State<LoginForm> {
   final _user = TextEditingController();
   final _pass = TextEditingController();
   bool keep = false;
+  bool busy = false; // signing in
 
   @override
   void dispose() {
@@ -28,16 +31,45 @@ class _LoginFormState extends State<LoginForm> {
     super.dispose();
   }
 
-  void _submit() {
-    if (!_key.currentState!.validate()) return;
-    // Demo: any password works. A username with "reviewer" or "mlgoo" opens the
-    // municipality side; anything else opens the barangay side.
-    // TODO: connect to your sign-in endpoint and use the account's real role.
-    final u = _user.text.toLowerCase();
-    final municipal = u.contains('reviewer') || u.contains('mlgoo');
-    Navigator.of(context).pushReplacement(MaterialPageRoute(
-      builder: (_) => municipal ? const MunicipalPage() : const DashboardPage(),
-    ));
+  Future<void> _submit() async {
+    if (busy || !_key.currentState!.validate()) return;
+    final u = _user.text.trim().toLowerCase();
+
+    // DEMO accounts (no Firebase needed): "demo" opens the barangay side,
+    // a username with "reviewer" or "mlgoo" opens the municipality side.
+    final municipalDemo = u.contains('reviewer') || u.contains('mlgoo');
+    if (!firebaseReady || u == 'demo' || municipalDemo) {
+      Navigator.of(context).pushReplacement(MaterialPageRoute(
+        builder: (_) => municipalDemo ? const MunicipalPage() : const DashboardPage(),
+      ));
+      return;
+    }
+
+    // REAL accounts from Firebase (e.g. brgy-ungka1 / mun-pavia)
+    setState(() => busy = true);
+    notify(context, tr('Signing in…', 'Nagsa-sign in…', 'Nagasign in…'), type: NotifyType.info, title: 'Gawad');
+    try {
+      final role = await cloud.signIn(u, _pass.text);
+      if (!mounted) return;
+      if (role == 'admin') {
+        notify(
+          context,
+          tr('The OPPDC screens still show demo data. They connect to Firebase next.',
+              'Demo data pa ang nasa screen ng OPPDC.', 'Demo data pa ang ara sa screen sang OPPDC.'),
+          type: NotifyType.warning,
+          title: tr('Not connected yet', 'Hindi pa konektado', 'Wala pa konektado'),
+        );
+      }
+      Navigator.of(context).pushReplacement(MaterialPageRoute(
+        builder: (_) => role == 'barangay' ? const DashboardPage() : const MunicipalPage(),
+      ));
+    } catch (e) {
+      if (mounted) {
+        notify(context, '$e', type: NotifyType.error, title: tr('Sign-in failed', 'Hindi naka-sign in', 'Wala naka-sign in'));
+      }
+    } finally {
+      if (mounted) setState(() => busy = false);
+    }
   }
 
   @override
@@ -54,7 +86,7 @@ class _LoginFormState extends State<LoginForm> {
           label: 'Username or mobile number',
           icon: Icons.person_outline,
           controller: _user,
-          hint: 'mina.reviewer or 09171234567',
+          hint: 'brgy-ungka1',
           autofill: const [AutofillHints.username],
           validator: (v) => (v ?? '').trim().isEmpty ? 'Enter your username or mobile number.' : null,
         ),
@@ -97,14 +129,15 @@ class _LoginFormState extends State<LoginForm> {
           ],
         ),
         const SizedBox(height: 8),
-        YellowButton(label: 'Sign in', icon: Icons.login, onPressed: _submit),
+        YellowButton(label: busy ? 'Signing in…' : 'Sign in', icon: busy ? Icons.hourglass_top_rounded : Icons.login, onPressed: _submit),
         if (kDemoMode) ...[
           const SizedBox(height: 12),
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
             decoration: BoxDecoration(color: C.mist, borderRadius: BorderRadius.circular(10)),
             child: Text(
-              'Demo: any password works. Type mina.reviewer to open the municipality side, or any other username for the barangay side.',
+              'Real accounts: use the login ID from OPPDC (e.g. brgy-ungka1). '
+              'Demo (no internet needed): type demo for the barangay side or mina.reviewer for the municipality side, with any password.',
               style: sans(13.5, color: C.muted, h: 1.45),
             ),
           ),

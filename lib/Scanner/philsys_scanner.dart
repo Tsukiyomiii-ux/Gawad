@@ -18,6 +18,7 @@ import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart
 import 'package:tanod_incentives/Scanner/id_camera_screen.dart';
 import 'package:tanod_incentives/theme.dart' show tr;
 import 'package:tanod_incentives/widgets/notify.dart'; // top pop-ups
+import 'package:tanod_incentives/data/scan_settings.dart'; // address / birthday on or off
 import 'package:tanod_incentives/Scanner/ocr_files/id_parser.dart' show IdParser;
 import 'package:tanod_incentives/Templates/payroll_template.dart' show TanodPerson;
 
@@ -117,6 +118,16 @@ class _PhilsysScannerViewState extends State<PhilsysScannerView> {
       scanner.dispose();
     }
 
+    // Demo mode (kRequirePhilSysQr = false in data/scan_settings.dart): any ID
+    // is accepted. No QR, or a QR without a name → read the name from the photo.
+    if (!kRequirePhilSysQr) {
+      final fromQr = raw == null ? null : TanodPerson.fromJsonString(raw, idFront: _frontCard, idBack: _backCard);
+      var person = (fromQr != null && fromQr.lastName.trim().isNotEmpty) ? fromQr : await _nameFromPhoto();
+      if (!kCollectAddress) person = _withAddress(person, ''); // not kept
+      if (mounted) Navigator.pop(context, person);
+      return;
+    }
+
     if (raw == null) {
       _fail('No QR code found. Retake the side with the QR code: fill the frame, hold steady and avoid glare.');
       return;
@@ -130,7 +141,8 @@ class _PhilsysScannerViewState extends State<PhilsysScannerView> {
 
     // The PhilSys QR has no address. Read it from the front photo instead
     // (offline ML Kit), so the documents show where the tanod lives.
-    if (person.rawAddress.replaceAll(RegExp(r'[,\s]'), '').isEmpty && _frontPath != null) {
+    // (Skipped when the address is turned off in data/scan_settings.dart)
+    if (kCollectAddress && person.rawAddress.replaceAll(RegExp(r'[,\s]'), '').isEmpty && _frontPath != null) {
       setState(() => _status = 'Reading the address…');
       final ocr = TextRecognizer(script: TextRecognitionScript.latin);
       try {
@@ -144,7 +156,43 @@ class _PhilsysScannerViewState extends State<PhilsysScannerView> {
       }
     }
 
+    if (!kCollectAddress) person = _withAddress(person, ''); // not kept
     if (mounted) Navigator.pop(context, person);
+  }
+
+  /// Any ID (demo): read the name printed on the front photo (offline ML Kit).
+  /// Whatever it misses, the person types on the next screen.
+  Future<TanodPerson> _nameFromPhoto() async {
+    var first = '', middle = '', last = '';
+    if (_frontPath != null) {
+      setState(() => _status = 'Reading the name…');
+      final ocr = TextRecognizer(script: TextRecognitionScript.latin);
+      try {
+        final d = IdParser.readOffline(await ocr.processImage(InputImage.fromFilePath(_frontPath!)));
+        first = d.firstName;
+        middle = d.middleInitial;
+        last = d.lastName;
+      } catch (_) {
+        // name not readable: it is typed on the next screen
+      } finally {
+        ocr.close();
+      }
+    }
+    return TanodPerson(
+      pcn: 'N/A',
+      firstName: first,
+      middleName: middle,
+      lastName: last,
+      suffix: '',
+      sex: 'N/A',
+      dob: 'N/A',
+      pob: 'N/A',
+      rawAddress: '',
+      barangay: '',
+      municipality: '',
+      idFront: _frontCard,
+      idBack: _backCard,
+    );
   }
 
   TanodPerson _withAddress(TanodPerson p, String address) => TanodPerson(

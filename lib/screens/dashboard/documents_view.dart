@@ -12,6 +12,8 @@ import 'package:printing/printing.dart'; // PdfPreview for viewing an uploaded P
 import 'package:tanod_incentives/widgets/notify.dart'; // top pop-ups
 import 'package:tanod_incentives/widgets/save_file.dart'; // direct download
 import 'package:tanod_incentives/widgets/id_fields.dart'; // PhilSys ID field
+import 'package:tanod_incentives/data/cloud.dart'; // FIREBASE saving
+import 'package:tanod_incentives/widgets/pdf_pages.dart'; // previews = the real PDF
 
 export 'package:tanod_incentives/data/doc_kind.dart';
 
@@ -32,7 +34,12 @@ String _group(int v) {
   return b.toString();
 }
 
-String _no(int i) => (i + 1).toString().padLeft(3, '0');
+// Award number of the tanod at [i]: its fixed Firebase number when saved
+// online, otherwise its position in the list (demo mode).
+String _no(int i, [List<Tanod>? list]) {
+  final fixed = (list != null && i >= 0 && i < list.length) ? list[i].awardNumber : null;
+  return (fixed ?? i + 1).toString().padLeft(3, '0');
+}
 
 // ================= Shared: viewing a document or its backup copy =================
 
@@ -45,6 +52,24 @@ DocumentPaper paperFor(BrgyRecord rec, DocKind k, {bool signed = false}) => Docu
       certifiedBy: rec.captain,
       signed: signed,
     );
+
+// Changes whenever anything printed on the PDF changes (so the preview redraws).
+String officialPdfKey(BrgyRecord rec, DocKind k, {String? captain}) => [
+      k.name, rec.name, kYear, kMunicipality, kAmountEach, captain ?? rec.captain, rec.rep,
+      for (final t in rec.tanods)
+        '${t.awardNumber}|${t.fullName}|${t.scannedAddress}|${t.idFront?.length}|${t.idBack?.length}',
+    ].join('~');
+
+/// Preview of the REAL PDF (same as the downloaded file). With no tanods yet
+/// there is no PDF, so the drawn page ([fallback]) is shown instead.
+Widget officialPreview(BrgyRecord rec, DocKind k, {String? captain, bool thumbnail = false, Widget? fallback}) =>
+    rec.tanods.isEmpty
+        ? (fallback ?? paperFor(rec, k))
+        : PdfPages(
+            cacheKey: officialPdfKey(rec, k, captain: captain),
+            build: () => buildOfficialPdf(rec, k, captain: captain),
+            thumbnail: thumbnail,
+          );
 
 // The page on a grey desk. scroll: false when it sits inside another scroll view.
 Widget documentDesk(Widget paper, {bool scroll = true, bool photo = false}) {
@@ -217,7 +242,7 @@ Future<void> showBackupCopy(
             Flexible(
               child: f.bytes != null
                   ? SizedBox(height: size.height * .62, child: uploadedCopyView(f)!) // the real upload
-                  : documentDesk(paperFor(rec, kind, signed: f.uploaded), photo: f.uploaded),
+                  : documentDesk(f.uploaded ? paperFor(rec, kind, signed: true) : officialPreview(rec, kind), photo: f.uploaded),
             ),
             if (buttons.isNotEmpty) ...[
               const Divider(height: 1, color: C.line),
@@ -393,11 +418,7 @@ class _DocumentsViewState extends State<DocumentsView> {
               Text(sub, overflow: TextOverflow.ellipsis, style: sans(14, color: C.muted)),
             ]),
           ),
-          IconButton(
-            tooltip: tr('Download', 'I-download', 'I-download'),
-            onPressed: () => filled ? showOfficialPdf(context, rec, k) : _saved(_pdfName(k, filled)),
-            icon: const Icon(Icons.download_rounded, color: C.navy),
-          ),
+          // (Download button removed: the document card already has one)
           IconButton(
             tooltip: tr('Close', 'Isara', 'Sirhan'),
             onPressed: () => Navigator.pop(ctx),
@@ -429,12 +450,16 @@ class _DocumentsViewState extends State<DocumentsView> {
         builder: (ctx) => _shell(ctx, 860, [
           _dialogHeader(ctx, k, k.title, tr('Your set is being checked, so editing is locked.', 'Sinusuri ang inyong set kaya naka-lock ang pag-edit.', 'Ginausisa pa ang inyo set, gani naka-lock anay ang pag-edit.'), true),
           const Divider(height: 1, color: C.line),
-          Flexible(child: documentDesk(_paper(k, true))),
+          Flexible(child: documentDesk(officialPreview(rec, k))), // the real PDF
         ]),
       );
       return;
     }
-    showDialog(
+    _openEditor(k);
+  }
+
+  Future<void> _openEditor(DocKind k) async {
+    await showDialog(
       context: context,
       builder: (ctx) => StatefulBuilder(builder: (ctx, setD) {
         void changed() {
@@ -443,8 +468,11 @@ class _DocumentsViewState extends State<DocumentsView> {
           widget.onChanged();
         }
 
+        // Typing a signatory name only redraws the preview (not saved yet)
+        void preview() => setD(() {});
+
         final wide = MediaQuery.of(ctx).size.width >= 900;
-        final editor = _editorPanel(ctx, changed);
+        final editor = _editorPanel(ctx, changed, preview);
         return _shell(ctx, 1200, [
           _dialogHeader(ctx, k, tr('Edit ${k.title}', 'Baguhin ang ${k.title}', 'I-edit ang ${k.title}'),
               tr('Changes update all four documents', 'Maa-update ang apat na dokumento', 'Ma-update ang apat ka dokumento'), true),
@@ -457,12 +485,12 @@ class _DocumentsViewState extends State<DocumentsView> {
                       child: SingleChildScrollView(padding: const EdgeInsets.all(20), child: editor),
                     ),
                     const VerticalDivider(width: 1, color: C.line),
-                    Expanded(child: documentDesk(_paper(k, true))),
+                    Expanded(child: documentDesk(officialPreview(rec, k, captain: _cert.text.trim()))), // the real PDF
                   ])
                 : SingleChildScrollView(
                     child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
                       Padding(padding: const EdgeInsets.all(18), child: editor),
-                      documentDesk(_paper(k, true), scroll: false),
+                      documentDesk(officialPreview(rec, k, captain: _cert.text.trim()), scroll: false),
                     ]),
                   ),
           ),
@@ -481,8 +509,25 @@ class _DocumentsViewState extends State<DocumentsView> {
               const SizedBox(width: 12),
               FilledButton.icon(
                 style: FilledButton.styleFrom(backgroundColor: C.navy, foregroundColor: Colors.white, minimumSize: const Size(0, 46)),
-                onPressed: () {
+                onPressed: () async {
+                  // Save the signatory names now (not while typing)
+                  final rep = _prep.text.trim();
+                  final cert = _cert.text.trim();
+                  final namesChanged = rep != rec.rep || cert != rec.captain;
+                  rec
+                    ..rep = rep
+                    ..captain = cert;
+                  if (namesChanged) widget.onChanged(); // signed copies no longer match
+                  setState(() {});
                   Navigator.pop(ctx);
+                  // FIREBASE: Prepared by + Punong Barangay
+                  try {
+                    await cloud.saveSignatories();
+                  } catch (e) {
+                    if (mounted) notify(context, Cloud.friendly(e), type: NotifyType.error, title: tr('Not saved online', 'Hindi na-save online', 'Wala na-save online'));
+                    return;
+                  }
+                  if (!mounted) return;
                   notify(
                     context,
                     tr('${k.title} saved. All four documents use the same list.', 'Na-save ang ${k.title}. Iisang listahan ang gamit ng apat na dokumento.',
@@ -498,12 +543,22 @@ class _DocumentsViewState extends State<DocumentsView> {
         ]);
       }),
     );
+    // Closed without "Save changes" → throw away the typed names
+    if (!mounted) return;
+    final unsaved = _prep.text.trim() != rec.rep || _cert.text.trim() != rec.captain;
+    _prep.text = rec.rep;
+    _cert.text = rec.captain;
+    setState(() {});
+    if (unsaved) {
+      notify(context, tr('The signatory names you typed were not saved.', 'Hindi na-save ang mga pangalang itinype.',
+          'Wala na-save ang mga ngalan nga gin-type.'), type: NotifyType.info, title: tr('Not saved', 'Hindi na-save', 'Wala na-save'));
+    }
   }
 
   Widget _editorTitle(String text) =>
       Text(text.toUpperCase(), style: sans(13, w: FontWeight.w700, color: C.muted).copyWith(letterSpacing: .7));
 
-  Widget _signatoryField(String label, TextEditingController c, VoidCallback changed) =>
+  Widget _signatoryField(String label, TextEditingController c, VoidCallback changed) => // changed = redraw preview only
       Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Text(label, style: sans(15, w: FontWeight.w600, color: C.navy)),
         const SizedBox(height: 6),
@@ -511,16 +566,13 @@ class _DocumentsViewState extends State<DocumentsView> {
           controller: c,
           style: sans(15),
           cursorColor: C.blue,
-          onChanged: (_) {
-            rec.rep = _prep.text;
-            rec.captain = _cert.text;
-            changed();
-          },
+          // Only the preview updates while typing; the names are saved on "Save changes"
+          onChanged: (_) => changed(),
           decoration: fieldDecoration(tr('Full name', 'Buong pangalan', 'Bilog nga ngalan'), Icons.draw_outlined),
         ),
       ]);
 
-  Widget _editorPanel(BuildContext ctx, VoidCallback changed) {
+  Widget _editorPanel(BuildContext ctx, VoidCallback changed, VoidCallback preview) {
     final anySigned = rec.files.values.any((f) => f.uploaded);
     return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
       Container(
@@ -557,9 +609,9 @@ class _DocumentsViewState extends State<DocumentsView> {
       const SizedBox(height: 20),
       _editorTitle(tr('Signatories · $kYear', 'Mga pipirma · $kYear', 'Mga pipirma · $kYear')),
       const SizedBox(height: 10),
-      _signatoryField(tr('Prepared by (Barangay ${rec.position})', 'Inihanda ni (Barangay ${rec.position})', 'Ginhanda ni (Barangay ${rec.position})'), _prep, changed),
+      _signatoryField(tr('Prepared by (Barangay ${rec.position})', 'Inihanda ni (Barangay ${rec.position})', 'Ginhanda ni (Barangay ${rec.position})'), _prep, preview),
       const SizedBox(height: 12),
-      _signatoryField(tr('Certified correct (Punong Barangay)', 'Pinatunayan ni (Punong Barangay)', 'Ginpamatud-an ni (Punong Barangay)'), _cert, changed),
+      _signatoryField(tr('Certified correct (Punong Barangay)', 'Pinatunayan ni (Punong Barangay)', 'Ginpamatud-an ni (Punong Barangay)'), _cert, preview),
       const SizedBox(height: 22),
       Row(children: [
         Expanded(child: _editorTitle(tr('Tanods (${tanods.length} of ${rec.quota})', 'Mga tanod (${tanods.length} sa ${rec.quota})', 'Mga tanod (${tanods.length} sa ${rec.quota})'))),
@@ -581,7 +633,7 @@ class _DocumentsViewState extends State<DocumentsView> {
               child: Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
                 child: Row(children: [
-                  SizedBox(width: 38, child: Text(_no(i), style: sans(14.5, w: FontWeight.w700, color: C.navy))),
+                  SizedBox(width: 38, child: Text(_no(i, tanods), style: sans(14.5, w: FontWeight.w700, color: C.navy))),
                   Expanded(
                     child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                       Text(tanods[i].fullName, overflow: TextOverflow.ellipsis, style: sans(15, w: FontWeight.w600)),
@@ -612,7 +664,7 @@ class _DocumentsViewState extends State<DocumentsView> {
         backgroundColor: Colors.white,
         surfaceTintColor: Colors.white,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        title: Text('Award no. ${_no(i)}', style: serif(22)),
+        title: Text('Award no. ${_no(i, tanods)}', style: serif(22)),
         content: SizedBox(
           width: 400,
           child: SingleChildScrollView(
@@ -688,15 +740,36 @@ class _DocumentsViewState extends State<DocumentsView> {
         ..idType = kIdType
         ..confirmed = true;
       changed();
-      if (mounted) {
+      // FIREBASE
+      var savedOnline = true;
+      try {
+        await cloud.updateTanod(t);
+      } catch (e) {
+        savedOnline = false;
+        if (mounted) notify(context, Cloud.friendly(e), type: NotifyType.error, title: tr('Not saved online', 'Hindi na-save online', 'Wala na-save online'));
+      }
+      if (savedOnline && mounted) {
         notify(context, tr('Saved ${t.fullName}.', 'Na-save si ${t.fullName}.', 'Na-save si ${t.fullName}.'),
             title: tr('Tanod updated', 'Na-update ang tanod', 'Na-update ang tanod'));
       }
     } else if (action == 'remove') {
       final name = t.fullName;
-      tanods.removeAt(i);
-      changed();
-      widget.onToast(tr('Removed $name. Award numbers were renumbered.', 'Tinanggal si $name. Inayos ang mga award number.', 'Ginkuha na si $name. Na-ilis na ang mga award number.'));
+      // FIREBASE: frees the award number for the next tanod
+      var removedOnline = true;
+      try {
+        await cloud.removeTanod(t);
+      } catch (e) {
+        removedOnline = false;
+        if (mounted) notify(context, Cloud.friendly(e), type: NotifyType.error, title: tr('Not saved online', 'Hindi na-save online', 'Wala na-save online'));
+      }
+      if (removedOnline) {
+        tanods.remove(t);
+        changed();
+        widget.onToast(cloud.live
+            ? tr('Removed $name. Their award number goes to the next tanod added.', 'Tinanggal si $name. Mapupunta ang award number niya sa susunod na idadagdag.',
+                'Ginkuha si $name. Ang iya award number mapakadto sa masunod nga idugang.')
+            : tr('Removed $name. Award numbers were renumbered.', 'Tinanggal si $name. Inayos ang mga award number.', 'Ginkuha na si $name. Na-ilis na ang mga award number.'));
+      }
     }
 
     Future.delayed(const Duration(milliseconds: 400), () {
@@ -996,7 +1069,9 @@ class _DocumentsViewState extends State<DocumentsView> {
 
     return _cardShell([
       _thumb(
-        paper: f.uploaded ? (uploadedCopyView(f, thumbnail: true) ?? paperFor(rec, k, signed: true)) : _paper(k, true),
+        paper: f.uploaded
+            ? (uploadedCopyView(f, thumbnail: true) ?? paperFor(rec, k, signed: true))
+            : officialPreview(rec, k, thumbnail: true, fallback: _paper(k, true)), // the real PDF's first page
         badge: f.uploaded ? (f.outdated ? 'OLD SIGNED COPY' : 'SIGNED COPY') : 'READY TO PRINT',
         badgeColor: f.uploaded ? (f.outdated ? C.yellowDark : C.green) : C.blue,
         photo: f.uploaded && f.bytes == null, // real uploads are shown as they are
@@ -1010,8 +1085,8 @@ class _DocumentsViewState extends State<DocumentsView> {
           Text(
             k == DocKind.certification
                 ? tr('${tanods.length} tanods certified · signatories set', '${tanods.length} tanod · may pipirma na', '${tanods.length} ka tanod · may pipirma na')
-                : tr('${tanods.length} names · award nos. 001–${_no(tanods.isEmpty ? 0 : tanods.length - 1)}',
-                    '${tanods.length} pangalan · award no. 001–${_no(tanods.isEmpty ? 0 : tanods.length - 1)}', '${tanods.length} ka ngalan · award no. 001–${_no(tanods.isEmpty ? 0 : tanods.length - 1)}'),
+                : tr('${tanods.length} names · award nos. ${_no(0, tanods)}–${_no(tanods.isEmpty ? 0 : tanods.length - 1, tanods)}',
+                    '${tanods.length} pangalan · award no. ${_no(0, tanods)}–${_no(tanods.isEmpty ? 0 : tanods.length - 1, tanods)}', '${tanods.length} ka ngalan · award no. ${_no(0, tanods)}–${_no(tanods.isEmpty ? 0 : tanods.length - 1, tanods)}'),
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: sans(14, color: C.muted),
@@ -1086,8 +1161,11 @@ class DocumentPaper extends StatelessWidget {
   final DocKind kind;
   final List<Tanod>? tanods;
   final String? preparedBy, certifiedBy;
-  final String barangay; // whose documents these are (the municipality views many)
-  final String preparedRole;
+  // Whose documents these are (the municipality views many). Defaults to the
+  // signed-in barangay; not a const default because it comes from Firebase.
+  final String? _barangay, _preparedRole;
+  String get barangay => _barangay ?? kBarangay;
+  String get preparedRole => _preparedRole ?? 'Barangay $kRepPosition';
   final bool signed;
 
   const DocumentPaper({
@@ -1096,10 +1174,11 @@ class DocumentPaper extends StatelessWidget {
     this.tanods,
     this.preparedBy,
     this.certifiedBy,
-    this.barangay = kBarangay,
-    this.preparedRole = 'Barangay $kRepPosition',
+    String? barangay,
+    String? preparedRole,
     this.signed = false,
-  });
+  })  : _barangay = barangay,
+        _preparedRole = preparedRole;
 
   bool get filled => tanods != null;
   bool get _sign => signed && filled;
@@ -1235,7 +1314,7 @@ class DocumentPaper extends StatelessWidget {
   Widget _payroll() {
     final rows = [
       for (var i = 0; i < _rowCount; i++)
-        filled ? [_no(i), tanods![i].fullName, '${_group(kAmountEach)}.00', ''] : ['', '', '', ''],
+        filled ? [_no(i, tanods), tanods![i].fullName, '${_group(kAmountEach)}.00', ''] : ['', '', '', ''],
     ];
     return _table(
       headers: ['NO.', 'NAME OF TANOD', 'AMOUNT (₱)', 'SIGNATURE OF PAYEE'],
@@ -1253,7 +1332,7 @@ class DocumentPaper extends StatelessWidget {
       for (var i = 0; i < _rowCount; i++)
         filled
             ? [
-                _no(i),
+                _no(i, tanods),
                 tanods![i].middle.isEmpty
                     ? '${tanods![i].last}, ${tanods![i].first}'
                     : '${tanods![i].last}, ${tanods![i].first} ${tanods![i].middle}.',
@@ -1309,7 +1388,7 @@ class DocumentPaper extends StatelessWidget {
               width: 312,
               child: Container(
                 color: (tanods![i].confirmed || signed) ? null : _flag,
-                child: Text('${_no(i)}  ${tanods![i].fullName}', style: _t(12)),
+                child: Text('${_no(i, tanods)}  ${tanods![i].fullName}', style: _t(12)),
               ),
             ),
         ])
@@ -1361,7 +1440,7 @@ class DocumentPaper extends StatelessWidget {
             ]),
           ),
           const SizedBox(height: 8),
-          Text(t == null ? 'Name: ____________________' : '${_no(i)}  ${t.fullName}',
+          Text(t == null ? 'Name: ____________________' : '${_no(i, tanods)}  ${t.fullName}',
               overflow: TextOverflow.ellipsis, style: _t(10.5, w: t == null ? FontWeight.w400 : FontWeight.w700)),
           const SizedBox(height: 6),
           for (var s = 1; s <= 3; s++)

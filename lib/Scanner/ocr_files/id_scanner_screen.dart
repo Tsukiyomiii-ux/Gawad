@@ -8,6 +8,7 @@ import 'id_parser.dart';
 import 'id_image_tools.dart';
 import 'package:tanod_incentives/Scanner/id_camera_screen.dart';
 import 'package:tanod_incentives/widgets/notify.dart'; // top pop-ups
+import 'package:tanod_incentives/data/scan_settings.dart'; // address / birthday on or off
 
 /// OCR scanner (used when there is no internet).
 /// Pops a [TanodPerson] back to the masterlist when "Confirm Details" is tapped.
@@ -96,6 +97,13 @@ class _IdScannerScreenState extends State<IdScannerScreen> {
   }
 
   // Top pop-up; the color picks the style (green = done, orange = check, red = problem)
+  /// Fields shown on this screen (birthday / address can be turned off)
+  bool _shows(IdField f) => switch (f) {
+        IdField.birthDate => kCollectBirthday,
+        IdField.address => kCollectAddress,
+        _ => true,
+      };
+
   void _showMessage(String text, Color color) {
     if (!mounted) return;
     final type = color == Colors.green
@@ -161,7 +169,7 @@ class _IdScannerScreenState extends State<IdScannerScreen> {
           final value = result.get(f);
           if (value.isEmpty) continue; // keep anything the user already typed
           _controllerFor(f).text = value;
-          if (result.needsCheck.contains(f)) _needsCheck.add(f);
+          if (result.needsCheck.contains(f) && _shows(f)) _needsCheck.add(f);
         }
         // MERGE: remember Gemini's barangay/municipality split for this address
         _aiBarangay = gemini?.data.barangay ?? '';
@@ -240,16 +248,17 @@ class _IdScannerScreenState extends State<IdScannerScreen> {
   Future<void> _confirmDetails() async {
     final first = _firstNameController.text.trim();
     final last = _lastNameController.text.trim();
-    final address = _addressController.text.trim();
-    final parts = _addressParts;
+    // Address off (scan_settings.dart): the signed-in account's barangay is used
+    final address = kCollectAddress ? _addressController.text.trim() : '';
+    final parts = kCollectAddress ? _addressParts : (barangay: '', municipality: '');
     final brgy = parts.barangay.isNotEmpty ? parts.barangay : widget.fallbackBarangay;
     final muni = parts.municipality.isNotEmpty ? parts.municipality : widget.fallbackMunicipality;
 
     final missing = <String>[
       if (first.isEmpty) 'First Name',
       if (last.isEmpty) 'Last Name',
-      if (address.isEmpty && widget.fallbackBarangay.isEmpty) 'Address',
-      if (brgy.isEmpty || muni.isEmpty)
+      if (kCollectAddress && address.isEmpty && widget.fallbackBarangay.isEmpty) 'Address',
+      if (kCollectAddress && (brgy.isEmpty || muni.isEmpty))
         'Barangay/Municipality in the address (write it like "PUROK 1, ARIPDIP, SAN RAFAEL, ILOILO")',
       if (_frontCard == null) 'Front scan',
       if (_backCard == null) 'Back scan',
@@ -287,7 +296,7 @@ class _IdScannerScreenState extends State<IdScannerScreen> {
         firstName: first,
         lastName: last,
         middleInitial: _middleInitialController.text,
-        birthDate: _birthDateController.text,
+        birthDate: kCollectBirthday ? _birthDateController.text : '',
         address: address,
         barangay: brgy,
         municipality: muni,
@@ -494,11 +503,16 @@ class _IdScannerScreenState extends State<IdScannerScreen> {
             const SizedBox(height: 12),
             _nameField('Middle Initial', IdField.middleInitial),
             const SizedBox(height: 12),
-            _nameField('Birthday', IdField.birthDate, hint: 'e.g. JANUARY 15, 1990'),
-            const SizedBox(height: 12),
-            _nameField('Address', IdField.address, maxLines: 3),
-            const SizedBox(height: 6),
-            _addressPreview(),
+            // Birthday / Address only when turned on in data/scan_settings.dart
+            if (kCollectBirthday) ...[
+              _nameField('Birthday', IdField.birthDate, hint: 'e.g. JANUARY 15, 1990'),
+              const SizedBox(height: 12),
+            ],
+            if (kCollectAddress) ...[
+              _nameField('Address', IdField.address, maxLines: 3),
+              const SizedBox(height: 6),
+              _addressPreview(),
+            ],
             const SizedBox(height: 20),
             ElevatedButton(
               style: ElevatedButton.styleFrom(

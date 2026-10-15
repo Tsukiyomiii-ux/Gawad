@@ -5,6 +5,7 @@ import 'package:tanod_incentives/data/doc_kind.dart';
 import 'package:tanod_incentives/data/store.dart';
 import 'package:tanod_incentives/widgets/ui.dart';
 import 'package:tanod_incentives/widgets/chat_thread.dart';
+import 'package:tanod_incentives/data/cloud.dart'; // FIREBASE
 import 'package:tanod_incentives/screens/dashboard/documents_view.dart' show showBackupCopy, shareSignedCopy;
 
 // The municipal reviewer checks one barangay's PAPER set.
@@ -79,10 +80,42 @@ class CheckPage extends StatefulWidget {
 class _CheckPageState extends State<CheckPage> {
   BrgyRecord get b => widget.rec;
 
+  void _onCloudChange() {
+    if (!mounted) return;
+    setState(() {});
+    // FIREBASE: this chat is on screen, so new messages are read right away
+    if (b.unreadMuni > 0) {
+      b.unreadMuni = 0;
+      cloud.markReadFor(b);
+    }
+  }
+
   @override
   void initState() {
     super.initState();
     b.unreadMuni = 0;
+    cloud.markReadFor(b); // FIREBASE: clear the badge online too
+    cloud.viewingBarangay = b.id;
+    cloud.changes.addListener(_onCloudChange);
+  }
+
+  @override
+  void dispose() {
+    if (cloud.viewingBarangay == b.id) cloud.viewingBarangay = null;
+    cloud.changes.removeListener(_onCloudChange);
+    super.dispose();
+  }
+
+  /// Runs a Firebase action; shows a red pop-up if it fails. Returns false on failure.
+  Future<bool> _cloud(Future<void> Function() action) async {
+    if (!cloud.isMunicipal) return true;
+    try {
+      await action();
+      return true;
+    } catch (e) {
+      if (mounted) toast(context, Cloud.friendly(e), type: NotifyType.error, title: tr('Not saved online', 'Hindi na-save online', 'Wala na-save online'));
+      return false;
+    }
   }
 
   // The paper set is at the municipal office and can be checked.
@@ -105,7 +138,18 @@ class _CheckPageState extends State<CheckPage> {
       canReview && b.paperOk.length == DocKind.values.length && b.toFix.isEmpty && b.backupComplete && !_blocking;
 
   // ---------- actions ----------
-  void _send(String text, DocKind? doc) {
+  Future<void> _send(String text, DocKind? doc) async {
+    // FIREBASE: the message (and the correction mark) arrive through the live data
+    if (cloud.isMunicipal) {
+      if (!await _cloud(() => cloud.messageBarangay(b, text, doc)) || !mounted) return;
+    } else {
+      _sendLocal(text, doc);
+    }
+    if (!mounted) return;
+    _sentToast(doc);
+  }
+
+  void _sendLocal(String text, DocKind? doc) {
     setState(() {
       b.post(fromMunicipality: true, text: text, doc: doc);
       if (doc != null) {
@@ -116,6 +160,9 @@ class _CheckPageState extends State<CheckPage> {
         }
       }
     });
+  }
+
+  void _sentToast(DocKind? doc) {
     if (doc != null) {
       toast(
         context,
@@ -222,9 +269,10 @@ class _CheckPageState extends State<CheckPage> {
       icon: Icons.verified_outlined,
     );
     if (!ok || !mounted) return;
+    if (!await _cloud(() => cloud.markChecked(b)) || !mounted) return; // FIREBASE: verified
     setState(() {
       b.status = BrgyStatus.checked;
-      b.post(fromMunicipality: true, system: true, text: 'Paper set checked. Nothing to fix. Thank you!');
+      if (!cloud.isMunicipal) b.post(fromMunicipality: true, system: true, text: 'Paper set checked. Nothing to fix. Thank you!');
     });
     toast(context, tr('Brgy. ${b.name} is checked.', 'Nasuri na ang Brgy. ${b.name}.', 'Nausisa na ang Brgy. ${b.name}.'),
         title: tr('Barangay checked', 'Nasuri ang barangay', 'Nausisa ang barangay'));
@@ -559,7 +607,7 @@ class _CheckPageState extends State<CheckPage> {
                   : null,
             ),
             icon: const Icon(Icons.visibility_outlined, size: 18),
-            label: Text(tr('View Digital Copy', 'Tingnan ang Digital na Kopya', 'Tan-awa ang Digital nga Kopya')),
+            label: Text(tr('View Soft Copy', 'Tingnan ang Soft Copy', 'Tan-awa ang Soft Copy')),
           ),
           if (canReview && !ok)
             OutlinedButton.icon(
@@ -575,6 +623,7 @@ class _CheckPageState extends State<CheckPage> {
                   ? null
                   : () {
                       setState(() => b.paperOk.add(k));
+                      cloud.setPaperOk(b, k, true); // FIREBASE
                       toast(context, tr('${k.title} marked as correct. ${b.paperOk.length} of 4 done.',
                           'Tama ang ${k.title}. ${b.paperOk.length} sa 4 tapos.', 'Husto ang ${k.title}. ${b.paperOk.length} sa 4 human.'),
                           title: tr('Paper is correct', 'Tama ang papel', 'Husto ang papel'));
@@ -589,6 +638,7 @@ class _CheckPageState extends State<CheckPage> {
               style: TextButton.styleFrom(foregroundColor: C.muted, minimumSize: const Size(0, 48)),
               onPressed: () {
                 setState(() => b.paperOk.remove(k));
+                cloud.setPaperOk(b, k, false); // FIREBASE
                 toast(context, tr('${k.title} is back to not checked.', 'Hindi pa nasuri ulit ang ${k.title}.', 'Wala pa nausisa liwat ang ${k.title}.'),
                     type: NotifyType.info, title: tr('Undone', 'Ibinalik', 'Ginbalik'));
               },

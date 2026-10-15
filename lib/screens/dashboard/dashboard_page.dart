@@ -9,13 +9,11 @@ import 'package:tanod_incentives/widgets/chat_thread.dart';
 import 'package:tanod_incentives/widgets/upload_sheet.dart';
 import 'package:tanod_incentives/widgets/id_fields.dart'; // PhilSys ID field + ID photo picker
 import 'package:tanod_incentives/widgets/notify.dart'; // top pop-ups + "Are you sure?"
+import 'package:tanod_incentives/data/cloud.dart'; // FIREBASE: live data + saving
 import 'package:tanod_incentives/screens/auth/auth_page.dart';
 import 'package:tanod_incentives/screens/dashboard/documents_view.dart';
 import 'package:tanod_incentives/screens/scan/scan_flow_page.dart';
 import 'package:tanod_incentives/Templates/gawad_pdf.dart'; // MERGE: real PDFs
-import 'package:flutter/foundation.dart' show compute;
-import 'package:camera/camera.dart' show XFile;
-import 'package:tanod_incentives/Scanner/id_camera_screen.dart'; // retake ID photos
 
 // Barangay representative dashboard.
 // Pages: Overview, Tanods, Documents, Messages, Account, Help.
@@ -112,7 +110,14 @@ String peso(int v) {
   return '₱$b';
 }
 
-String awardNo(int index) => (index + 1).toString().padLeft(3, '0');
+// Award number shown for the tanod at [index]. With Firebase it is the tanod's
+// fixed number from the barangay's block (never shifts); in demo mode it is the
+// position in the list. index == list length → the number the next tanod gets.
+String awardNo(int index) {
+  final list = store.abat.tanods;
+  final fixed = index < list.length ? list[index].awardNumber : (cloud.live ? cloud.nextAwardNumber : null);
+  return (fixed ?? index + 1).toString().padLeft(3, '0');
+}
 
 // Which tanods the Tanods list shows (set by the View buttons on the Overview tiles)
 enum _TanodFilter { all, completed, misspelled, duplicate }
@@ -240,9 +245,79 @@ class _DashboardPageState extends State<DashboardPage> {
   void _toast(String m, [NotifyType type = NotifyType.success, String? title, VoidCallback? onTap]) =>
       notify(context, m, type: type, title: title, onTap: onTap);
 
+  // FIREBASE: redraw when online data arrives; show background save errors
+  int _chatSeen = -1; // messages already shown (-1 = not loaded yet)
+  bool _unreadAnnounced = false;
+
+  void _onCloudChange() {
+    if (!mounted) return;
+    setState(() {});
+    _announceMessages();
+  }
+
+  /// FIREBASE: pop-up when the municipality sends a message (tap → Messages).
+  void _announceMessages() {
+    final n = rec.chat.length;
+    final onMessages = navIndex == _messagesTab;
+    if (onMessages && rec.unreadBrgy > 0) {
+      rec.unreadBrgy = 0;
+      cloud.markRead(); // already reading them
+    }
+    // Unread messages from before signing in (arrive a moment after the dashboard opens)
+    if (!_unreadAnnounced && rec.unreadBrgy > 0 && !onMessages) {
+      _unreadAnnounced = true;
+      _newMessageToast(tr('You have ${rec.unreadBrgy} new message${rec.unreadBrgy == 1 ? '' : 's'} from $kMunicipality.',
+          'May ${rec.unreadBrgy} bagong mensahe mula sa $kMunicipality.', 'May ${rec.unreadBrgy} ka bag-o nga mensahe halin sa $kMunicipality.'));
+    } else if (_chatSeen >= 0 && n > _chatSeen && rec.chat.last.fromMunicipality && !onMessages) {
+      // A new message while the dashboard is open
+      _unreadAnnounced = true;
+      final text = rec.chat.last.text;
+      _newMessageToast(text.length > 90 ? '${text.substring(0, 90)}…' : text,
+          title: tr('New message from $kMunicipality', 'Bagong mensahe mula sa $kMunicipality', 'Bag-o nga mensahe halin sa $kMunicipality'));
+    }
+    if (n > 0 || _chatSeen >= 0) _chatSeen = n;
+  }
+
+  void _newMessageToast(String message, {String? title}) => _toast(
+        message,
+        NotifyType.info,
+        title ?? tr('New message', 'Bagong mensahe', 'Bag-o nga mensahe'),
+        () {
+          if (mounted) _go(_messagesTab); // tap the pop-up -> open Messages
+        },
+      );
+
+  void _onCloudError() {
+    final m = cloud.errors.value;
+    if (m == null || !mounted) return;
+    _toast(m, NotifyType.error, tr('Not saved online', 'Hindi na-save online', 'Wala na-save online'));
+    cloud.errors.value = null; // so the same error can show again later
+  }
+
+  @override
+  void dispose() {
+    cloud.changes.removeListener(_onCloudChange);
+    cloud.errors.removeListener(_onCloudError);
+    super.dispose();
+  }
+
+  /// Runs a Firebase save; shows a red pop-up if it fails. Returns false on failure.
+  Future<bool> _cloud(Future<void> Function() save) async {
+    if (!cloud.live) return true;
+    try {
+      await save();
+      return true;
+    } catch (e) {
+      if (mounted) _toast(Cloud.friendly(e), NotifyType.error, tr('Not saved online', 'Hindi na-save online', 'Wala na-save online'));
+      return false;
+    }
+  }
+
   @override
   void initState() {
     super.initState();
+    cloud.changes.addListener(_onCloudChange);
+    cloud.errors.addListener(_onCloudError);
     // Welcome + unread messages right after signing in
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
@@ -273,13 +348,18 @@ class _DashboardPageState extends State<DashboardPage> {
       danger: true,
     );
     if (!ok || !mounted) return;
+    await cloud.signOut();
+    if (!mounted) return;
     _toast(tr('You have signed out.', 'Naka-sign out ka na.', 'Naka-sign out ka na.'), NotifyType.info, tr('Signed out', 'Naka-sign out', 'Naka-sign out'));
     Navigator.of(context).pushReplacement(MaterialPageRoute(builder: (_) => const AuthPage()));
   }
 
   void _go(int i) => setState(() {
         navIndex = i;
-        if (i == _messagesTab) rec.unreadBrgy = 0;
+        if (i == _messagesTab) {
+          rec.unreadBrgy = 0;
+          cloud.markRead(); // FIREBASE: clear the badge online too
+        }
       });
 
   void _sync() {
@@ -298,6 +378,7 @@ class _DashboardPageState extends State<DashboardPage> {
     for (final f in rec.files.values) {
       if (f.uploaded) f.outdated = true;
     }
+    cloud.markCopiesOutdated(); // FIREBASE
   }
 
   void _quotaToast() => _toast(tr('Limit reached: OPPDC allows $kQuota tanods for Brgy. $kBarangay this year.',
@@ -338,6 +419,9 @@ class _DashboardPageState extends State<DashboardPage> {
       pendingSync++;
       online = false;
     });
+    // FIREBASE: save the signed copy online
+    final savedOnline = await _cloud(() => cloud.uploadSignedCopy(k, bytes: up.bytes, fileName: up.name, isPdf: up.isPdf, via: up.via));
+    if (!savedOnline || !mounted) return;
     _toast(wasFix
         ? tr('Corrected ${k.title} uploaded. Bring the corrected paper to $kMunicipality too.',
             'Na-upload ang naitamang ${k.title}. Dalhin din ang naitamang papel sa $kMunicipality.', 'Na-upload na ang natadlong nga ${k.title}. Palihog dal-a man ang natadlong nga papel sa $kMunicipality.')
@@ -357,7 +441,11 @@ class _DashboardPageState extends State<DashboardPage> {
     }
     final added = await Navigator.of(context).push<List<Tanod>>(
       MaterialPageRoute(
-        builder: (_) => ScanFlowPage(startCount: tanods.length, slotsLeft: kQuota - tanods.length),
+        // startCount = award number shown for the first tanod scanned
+        builder: (_) => ScanFlowPage(
+          startCount: cloud.live ? (cloud.nextAwardNumber ?? tanods.length + 1) : tanods.length + 1,
+          slotsLeft: kQuota - tanods.length,
+        ),
       ),
     );
     if (!mounted || added == null || added.isEmpty) return;
@@ -365,8 +453,24 @@ class _DashboardPageState extends State<DashboardPage> {
       tanods.addAll(added);
       _markChanged();
     });
-    _toast(tr('Added ${added.length} tanod${added.length == 1 ? '' : 's'} from scanned IDs.',
-        'Naidagdag ang ${added.length} tanod mula sa na-scan na ID.', 'Nadugang ang ${added.length} ka tanod halin sa na-scan nga ID.'));
+    // FIREBASE: save each one (gives each its award number)
+    for (final t in added) {
+      final ok = await _cloud(() => cloud.addTanod(t));
+      if (!mounted) return;
+      if (!ok) {
+        setState(() => tanods.remove(t)); // e.g. limit reached or list locked
+        return;
+      }
+    }
+    if (!mounted) return;
+    _go(2); // Documents: the scanned tanods are now on all four documents
+    _toast(
+      tr('Added ${added.length} tanod${added.length == 1 ? '' : 's'} from scanned IDs. All four documents were updated.',
+          'Naidagdag ang ${added.length} tanod mula sa na-scan na ID. Na-update ang apat na dokumento.',
+          'Nadugang ang ${added.length} ka tanod halin sa na-scan nga ID. Na-update ang apat ka dokumento.'),
+      NotifyType.success,
+      tr('Documents updated', 'Na-update ang dokumento', 'Na-update ang dokumento'),
+    );
   }
 
   // Demo only: jump between statuses for the pitch.
@@ -491,6 +595,12 @@ class _DashboardPageState extends State<DashboardPage> {
       tanods.add(added);
       _markChanged();
     });
+    // FIREBASE: save it (gives the award number)
+    if (!await _cloud(() => cloud.addTanod(added))) {
+      if (mounted) setState(() => tanods.remove(added));
+      return;
+    }
+    if (!mounted) return;
     _toast(tr('Added ${added.fullName} as award no. ${awardNo(tanods.length - 1)}.',
         'Naidagdag si ${added.fullName} bilang award no. ${awardNo(tanods.length - 1)}.', 'Nadugang si ${added.fullName} bilang award no. ${awardNo(tanods.length - 1)}.'));
   }
@@ -516,9 +626,10 @@ class _DashboardPageState extends State<DashboardPage> {
       tr('Share', 'Ibahagi', 'Ipaambit'),
     );
     if (!ok || !mounted) return;
+    if (!await _cloud(cloud.submit) || !mounted) return; // FIREBASE
     setState(() {
       rec.status = BrgyStatus.submitted;
-      rec.post(fromMunicipality: false, system: true, text: 'Shared all documents. The paper set will be brought to the municipal office.');
+      if (!cloud.live) rec.post(fromMunicipality: false, system: true, text: 'Shared all documents. The paper set will be brought to the municipal office.');
     });
     _toast(tr('Shared to Municipality. Bring the paper set to the MLGOO office.',
         'Naibahagi sa Munisipyo. Dalhin ang papel sa tanggapan ng MLGOO.',
@@ -534,13 +645,16 @@ class _DashboardPageState extends State<DashboardPage> {
       tr('Tell $kMunicipality', 'Sabihan ang $kMunicipality', 'Ipahibalo sa $kMunicipality'),
     );
     if (!ok || !mounted) return;
+    if (!await _cloud(cloud.submit) || !mounted) return; // FIREBASE: returned → submitted again
     setState(() {
       rec.status = BrgyStatus.submitted;
-      rec.post(
-        fromMunicipality: false,
-        system: true,
-        text: 'Corrections done. The corrected paper pages will be brought to the municipal office.',
-      );
+      if (!cloud.live) {
+        rec.post(
+          fromMunicipality: false,
+          system: true,
+          text: 'Corrections done. The corrected paper pages will be brought to the municipal office.',
+        );
+      }
     });
     _toast(tr('Sent. $kMunicipality will check the corrected paper.', 'Naipadala. Susuriin ng $kMunicipality ang naitamang papel.', 'Napadala na. Usisaon sang $kMunicipality ang natadlong nga papel.'));
   }
@@ -627,7 +741,7 @@ class _DashboardPageState extends State<DashboardPage> {
                 overflow: TextOverflow.ellipsis, style: sans(13.5, color: C.muted)),
           ]),
         ),
-        if (kDemoMode) ...[_demoMenu(), const SizedBox(width: 6)],
+        if (kDemoMode && !cloud.live) ...[_demoMenu(), const SizedBox(width: 6)],
         Flexible(child: _syncChip(compact: !wide)), // FIX: was overflowing on phones
         const SizedBox(width: 10),
         PopupMenuButton<String>(
@@ -766,7 +880,7 @@ class _DashboardPageState extends State<DashboardPage> {
         gap,
         _stats(),
         gap,
-        _tanodPanel(limit: 6), // moved up, under the stat tiles
+        KeyedSubtree(key: _tanodListKey, child: _tanodPanel(limit: 6)), // moved up, under the stat tiles
         gap,
         if (two)
           Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -1025,9 +1139,11 @@ class _DashboardPageState extends State<DashboardPage> {
       _toast(tr('Marked as different people.', 'Itinala bilang magkaibang tao.', 'Ginmarkahan nga lain-lain nga tawo.'), NotifyType.success,
           tr('Duplicate cleared', 'Hindi na doble', 'Indi na doble'));
     } else {
-      final name = tanods[idx[1]].fullName;
+      final extra = tanods[idx[1]];
+      final name = extra.fullName;
+      if (!await _cloud(() => cloud.removeTanod(extra)) || !mounted) return; // FIREBASE
       setState(() {
-        tanods.removeAt(idx[1]);
+        tanods.remove(extra);
         _markChanged();
       });
       _toast(tr('Removed the second $name. Award numbers were updated.',
@@ -1408,9 +1524,6 @@ class _DashboardPageState extends State<DashboardPage> {
   // and nobody has marked them as "different people" yet.
   bool _isDuplicate(Tanod t) =>
       !resolved.contains('dup-${t.nameKey}') && tanods.where((x) => x.nameKey == t.nameKey).length > 1;
-  // Indexes of the other tanods with the same name
-  List<int> _duplicatesOf(Tanod t) =>
-      [for (var i = 0; i < tanods.length; i++) if (!identical(tanods[i], t) && tanods[i].nameKey == t.nameKey) i];
   // Missing inputs: something the documents need isn't on file yet (for now: the ID photos).
   // TODO(backend): when the database is ready, the photos/fields come from there; this check stays the same.
   bool _isMissingInputs(Tanod t) => _missingParts(t).isNotEmpty;
@@ -1428,8 +1541,18 @@ class _DashboardPageState extends State<DashboardPage> {
         tr('Filter cleared', 'Inalis ang filter', 'Ginkuha ang filter'));
   }
 
+  // The Overview's tanod list, so "View" can scroll down to it
+  final _tanodListKey = GlobalKey();
+
   void _setFilter(_TanodFilter f) {
     setState(() => _filter = f);
+    // Scroll down to the (now filtered) tanod list under the tiles
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final list = _tanodListKey.currentContext;
+      if (list != null) {
+        Scrollable.ensureVisible(list, duration: const Duration(milliseconds: 450), curve: Curves.easeInOutCubic, alignment: 0.02);
+      }
+    });
     final n = tanods.where(_matchesFilter).length;
     _toast(
       tr('$n tanod${n == 1 ? '' : 's'} shown: $_filterLabel.', '$n tanod ang ipinapakita: $_filterLabel.', '$n ka tanod ang ginapakita: $_filterLabel.'),
@@ -1741,9 +1864,12 @@ class _DashboardPageState extends State<DashboardPage> {
   }
 
   Widget _tanodPanel({int? limit}) {
-    // (index in the full list, tanod): the index is the award number and is used by Edit / Remove
-    final matching = [for (var i = 0; i < tanods.length; i++) if (_matchesFilter(tanods[i])) (i, tanods[i])];
-    final filtered = _filter != _TanodFilter.all;
+    // The View filter only applies to the Overview list ([limit] set).
+    // The Tanods page is the full list and is never filtered.
+    final overview = limit != null;
+    final filtered = overview && _filter != _TanodFilter.all;
+    // (index in the full list, tanod): the index is used by Edit / Remove
+    final matching = [for (var i = 0; i < tanods.length; i++) if (!filtered || _matchesFilter(tanods[i])) (i, tanods[i])];
     // A filtered list shows every match; the unfiltered Overview list shows the first [limit]
     final shown = limit == null || filtered ? matching : matching.take(limit).toList();
     final slots = kQuota - tanods.length;
@@ -1857,132 +1983,8 @@ class _DashboardPageState extends State<DashboardPage> {
         if (t.idBack == null) tr('Photo of the BACK of the ID', 'Litrato ng LIKOD ng ID', 'Litrato sang LIKOD sang ID'),
       ];
 
-  // Tap a status → pop-up listing what's missing / what to check, with a fix button
-  Future<void> _showStatus(int i, Tanod t) async {
-    final missing = _missingParts(t);
-    final misspelled = _isMisspelled(t);
-    final duplicate = _isDuplicate(t);
-    final twins = _duplicatesOf(t);
-    final needPhotos = t.idFront == null || t.idBack == null;
-
-    Widget item(IconData icon, Color color, String text) => Padding(
-          padding: const EdgeInsets.only(bottom: 10),
-          child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Icon(icon, size: 20, color: color),
-            const SizedBox(width: 10),
-            Expanded(child: Text(text, style: sans(15, h: 1.4))),
-          ]),
-        );
-
-    final action = await showDialog<String>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: Colors.white,
-        surfaceTintColor: Colors.white,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        title: Text('${awardNo(i)} · ${t.fullName}', style: serif(22)),
-        content: SizedBox(
-          width: 420,
-          child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
-            if (!misspelled && !duplicate && missing.isEmpty)
-              item(Icons.check_circle, C.blue,
-                  tr('Completed. Name checked, listed once, and ID photos on file.', 'Kumpleto. Nasuri ang pangalan, isang beses nakalista, at may litrato ng ID.',
-                      'Kompleto. Nausisa ang ngalan, makaisa nalista, kag may litrato sang ID.')),
-            if (duplicate) ...[
-              Text(tr('Same name as:', 'Kapareho ng pangalan ni:', 'Pareho sang ngalan ni:'),
-                  style: sans(15, w: FontWeight.w700, color: C.red)),
-              const SizedBox(height: 8),
-              for (final j in twins)
-                item(Icons.people_alt_outlined, C.red, '${awardNo(j)} · ${tanods[j].fullName}'),
-            ],
-            if (misspelled)
-              item(Icons.spellcheck_rounded, const Color(0xFF7A5B00),
-                  tr('Name not checked yet. Compare it with the original ID, then save.',
-                      'Hindi pa nasusuri ang pangalan. Ikumpara sa orihinal na ID, saka i-save.',
-                      'Wala pa nausisa ang ngalan. Palihog ikumpara sa orihinal nga ID, dayon i-save.')),
-            // Missing inputs: what still has to be added (ID photos for the photocopy sheet)
-            if (missing.isNotEmpty) ...[
-              const SizedBox(height: 4),
-              Text(tr('Missing inputs:', 'Kulang pa:', 'Kulang pa:'), style: sans(15, w: FontWeight.w700, color: const Color(0xFF475569))),
-              const SizedBox(height: 8),
-              for (final m in missing) item(Icons.add_a_photo_outlined, const Color(0xFF475569), m),
-            ],
-          ]),
-        ),
-        actionsPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: Text(tr('Close', 'Isara', 'Sirhan'), style: sans(15, w: FontWeight.w600, color: C.muted)),
-          ),
-          if (!locked && duplicate)
-            FilledButton.icon(
-              style: FilledButton.styleFrom(backgroundColor: C.red, foregroundColor: Colors.white),
-              onPressed: () => Navigator.pop(ctx, 'compare'),
-              icon: const Icon(Icons.compare_arrows_rounded, size: 18),
-              label: Text(tr('Compare', 'Ikumpara', 'Ikumpara')),
-            ),
-          if (!locked && needPhotos)
-            OutlinedButton.icon(
-              onPressed: () => Navigator.pop(ctx, 'photos'),
-              icon: const Icon(Icons.photo_camera_outlined, size: 18),
-              label: Text(tr('Take ID photos', 'Kunan ang ID', 'Kuhai ang ID')),
-            ),
-          if (!locked && (misspelled || t.first.trim().isEmpty || t.last.trim().isEmpty))
-            FilledButton.icon(
-              style: FilledButton.styleFrom(backgroundColor: C.navy, foregroundColor: Colors.white),
-              onPressed: () => Navigator.pop(ctx, 'edit'),
-              icon: const Icon(Icons.edit_outlined, size: 18),
-              label: Text(tr('Check name', 'Suriin ang pangalan', 'Usisaa ang ngalan')),
-            ),
-        ],
-      ),
-    );
-    if (!mounted) return;
-    if (action == 'edit') await _editTanod(i);
-    if (action == 'photos') await _retakePhotos(t);
-    // Existing "Same person?" dialog: remove the extra one, or mark as different people
-    if (action == 'compare') {
-      await _reviewDuplicate(_Issue('dup-${t.nameKey}', '', '', Icons.people_alt_outlined));
-    }
-  }
-
-  // Take the front and back ID photos for an existing tanod (guided camera)
-  Future<void> _retakePhotos(Tanod t) async {
-    Future<Uint8List?> shoot(String title) async {
-      final photo = await Navigator.push<XFile>(
-        context,
-        MaterialPageRoute(builder: (_) => IdCameraScreen(title: title)),
-      );
-      if (photo == null) return null;
-      return compute(cropToGuide, await photo.readAsBytes());
-    }
-
-    final front = await shoot(tr('Front of the ID', 'Harap ng ID', 'Atubangan sang ID'));
-    if (front == null || !mounted) return;
-    _toast(tr('Front photo saved. Now take the back.', 'Na-save ang harap. Kunan naman ang likod.', 'Na-save ang atubangan. Kuhai naman ang likod.'),
-        NotifyType.success, tr('Photo saved', 'Na-save ang litrato', 'Na-save ang litrato'));
-    final back = await shoot(tr('Back of the ID', 'Likod ng ID', 'Likod sang ID'));
-    if (back == null || !mounted) return;
-    setState(() {
-      t.idFront = front;
-      t.idBack = back;
-      _markChanged();
-    });
-    _toast(tr('ID photos saved for ${t.fullName}.', 'Na-save ang litrato ng ID ni ${t.fullName}.',
-        'Na-save ang litrato sang ID ni ${t.fullName}.'), NotifyType.success, tr('Photos saved', 'Na-save ang litrato', 'Na-save ang litrato'));
-  }
-
-  // Status pill that opens the pop-up when tapped
-  Widget _tappableStatus(int i, Tanod t) => InkWell(
-        borderRadius: BorderRadius.circular(99),
-        onTap: () => _showStatus(i, t),
-        child: Row(mainAxisSize: MainAxisSize.min, children: [
-          _statusPill(t),
-          const SizedBox(width: 4),
-          const Icon(Icons.chevron_right_rounded, size: 18, color: C.muted),
-        ]),
-      );
+  // The status pill is display-only (not clickable). ID photos are added or
+  // retaken from the Edit box; duplicates are handled from the Alerts panel.
 
   // Statuses, most serious first: Duplicate (red) > Check spelling (yellow) > Missing inputs (grey) > Completed (blue)
   Widget _statusPill(Tanod t) => _isDuplicate(t)
@@ -2016,7 +2018,7 @@ class _DashboardPageState extends State<DashboardPage> {
             flex: 2,
             child: Align(
               alignment: Alignment.center,
-              child: FittedBox(fit: BoxFit.scaleDown, child: _tappableStatus(i, t)),
+              child: FittedBox(fit: BoxFit.scaleDown, child: _statusPill(t)),
             ),
           ),
           if (actions)
@@ -2058,7 +2060,7 @@ class _DashboardPageState extends State<DashboardPage> {
               ]),
             ),
             const SizedBox(width: 8),
-            FittedBox(fit: BoxFit.scaleDown, child: _tappableStatus(i, t)),
+            FittedBox(fit: BoxFit.scaleDown, child: _statusPill(t)),
           ]),
           if (actions) ...[
             const SizedBox(height: 10),
@@ -2080,6 +2082,8 @@ class _DashboardPageState extends State<DashboardPage> {
     final last = TextEditingController(text: t.last);
     final formKey = GlobalKey<FormState>();
     final signedAlready = rec.files.values.any((f) => f.uploaded);
+    Uint8List? newFront = t.idFront, newBack = t.idBack;
+    var photosChanged = false;
 
     final saved = await showDialog<bool>(
       context: context,
@@ -2145,6 +2149,18 @@ class _DashboardPageState extends State<DashboardPage> {
                 ),
                 const SizedBox(height: 14),
                 const PhilSysIdField(), // fixed: PhilSys only
+                const SizedBox(height: 16),
+                // Add or retake the ID photos (for the ID photocopy sheet)
+                IdPhotoPicker(
+                  front: t.idFront,
+                  back: t.idBack,
+                  required: false,
+                  onChanged: (f, b) {
+                    newFront = f;
+                    newBack = b;
+                    photosChanged = true;
+                  },
+                ),
               ]),
             ),
           ),
@@ -2181,6 +2197,11 @@ class _DashboardPageState extends State<DashboardPage> {
           t.middle != middle.text.trim().toUpperCase() ||
           t.last != last.text.trim();
       setState(() {
+        if (photosChanged) {
+          t
+            ..idFront = newFront
+            ..idBack = newBack;
+        }
         t
           ..first = first.text.trim()
           ..middle = middle.text.trim().toUpperCase()
@@ -2194,7 +2215,11 @@ class _DashboardPageState extends State<DashboardPage> {
           online = false;
         }
       });
-      _toast(tr('Saved ${t.fullName}. All documents were updated.', 'Na-save si ${t.fullName}. Na-update ang lahat ng dokumento.', 'Na-save si ${t.fullName}. Na-update ang tanan nga dokumento.'),
+      var savedOnline = await _cloud(() => cloud.updateTanod(t)); // FIREBASE
+      if (savedOnline && photosChanged && t.idFront != null) {
+        savedOnline = await _cloud(() => cloud.saveIdPhotos(t)); // FIREBASE: new ID photos
+      }
+      if (savedOnline && mounted) _toast(tr('Saved ${t.fullName}. All documents were updated.', 'Na-save si ${t.fullName}. Na-update ang lahat ng dokumento.', 'Na-save si ${t.fullName}. Na-update ang tanan nga dokumento.'),
           NotifyType.success, tr('Changes saved', 'Na-save ang pagbabago', 'Na-save ang pagbag-o'));
     } else if (saved == false && mounted) {
       _toast(tr('No changes were made.', 'Walang binago.', 'Wala sing ginbag-o.'), NotifyType.info, tr('Edit cancelled', 'Kinansela', 'Ginkanselar'));
@@ -2209,23 +2234,30 @@ class _DashboardPageState extends State<DashboardPage> {
 
   Future<void> _removeTanod(int i) async {
     final t = tanods[i];
-    final after = tanods.length - i - 1;
+    // Demo: later tanods move up one number. Firebase: numbers never shift;
+    // this one's number goes to the next tanod added.
+    final after = cloud.live ? 0 : tanods.length - i - 1;
+    final freed = cloud.live
+        ? tr(' Award no. ${awardNo(i)} will go to the next tanod you add.', ' Ibibigay ang award no. ${awardNo(i)} sa susunod na idadagdag.',
+            ' Ihatag ang award no. ${awardNo(i)} sa masunod nga idugang.')
+        : '';
     final ok = await confirmAction(
       context,
       title: tr('Remove ${t.fullName}?', 'Tanggalin si ${t.fullName}?', 'Kuhaon si ${t.fullName}?'),
       message: tr(
-          'Are you sure? They will be taken off the Payroll, Masterlist, Certification and ID sheet.'
+          'Are you sure? They will be taken off the Payroll, Masterlist, Certification and ID sheet.$freed'
               '${after > 0 ? ' The $after tanod${after == 1 ? '' : 's'} after award no. ${awardNo(i)} will move up one number.' : ''}',
-          'Sigurado ka ba? Matatanggal siya sa Payroll, Masterlist, Certification at ID sheet.'
+          'Sigurado ka ba? Matatanggal siya sa Payroll, Masterlist, Certification at ID sheet.$freed'
               '${after > 0 ? ' Aakyat ng isang numero ang $after tanod pagkatapos ng award no. ${awardNo(i)}.' : ''}',
-          'Sigurado ka bala? Kuhaon sia sa Payroll, Masterlist, Certification kag ID sheet.'
+          'Sigurado ka bala? Kuhaon sia sa Payroll, Masterlist, Certification kag ID sheet.$freed'
               '${after > 0 ? ' Ang $after ka tanod pagkatapos sang award no. ${awardNo(i)} magasaka sing isa ka numero.' : ''}'),
       confirmLabel: tr('Yes, remove', 'Oo, tanggalin', 'Huo, kuhaon'),
       danger: true,
     );
     if (!ok || !mounted) return;
+    if (!await _cloud(() => cloud.removeTanod(t)) || !mounted) return; // FIREBASE: frees the award number
     setState(() {
-      tanods.removeAt(i);
+      tanods.remove(t);
       _markChanged();
     });
     _toast(
@@ -2410,7 +2442,11 @@ class _DashboardPageState extends State<DashboardPage> {
             asMunicipality: false,
             height: 460,
             onSend: (text, doc) {
-              setState(() => rec.post(fromMunicipality: false, text: text, doc: doc));
+              if (cloud.live) {
+                _cloud(() => cloud.sendMessage(text)); // FIREBASE: shows up through the live chat
+              } else {
+                setState(() => rec.post(fromMunicipality: false, text: text, doc: doc));
+              }
               _toast(tr('Your message was sent to $kMunicipality.', 'Naipadala ang mensahe sa $kMunicipality.', 'Napadala na ang mensahe sa $kMunicipality.'),
                   NotifyType.success, tr('Message sent', 'Naipadala', 'Napadala'));
             },

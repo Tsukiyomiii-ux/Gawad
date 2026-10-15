@@ -7,6 +7,7 @@ import 'package:tanod_incentives/data/store.dart';
 import 'package:tanod_incentives/widgets/ui.dart';
 import 'package:tanod_incentives/screens/auth/auth_page.dart';
 import 'package:tanod_incentives/screens/municipal/check_page.dart';
+import 'package:tanod_incentives/data/cloud.dart'; // FIREBASE: live barangays + saving
 
 // Municipality (MLGOO / municipal reviewer) dashboard, in English, Filipino
 // and Hiligaynon.
@@ -74,11 +75,74 @@ class _MunicipalPageState extends State<MunicipalPage> {
       ? tr('No representative yet', 'Wala pang kinatawan', 'Wala pa sang representante')
       : '${b.rep}${b.position.isEmpty ? '' : ' · ${b.position}'}';
 
+  // FIREBASE: redraw when online data arrives; show background save errors
+  // Per barangay: messages already seen (for "new message" pop-ups)
+  final Map<BrgyRecord, int> _chatSeen = {};
+  bool _chatReady = false; // false until the first pop-up check after opening
+
+  void _onCloudChange() {
+    if (!mounted) return;
+    setState(() {});
+    // FIREBASE: pop-up when a barangay sends a message (tap → open its chat)
+    for (final b in brgys) {
+      final n = b.chat.length;
+      final before = _chatSeen[b];
+      _chatSeen[b] = n;
+      if (!_chatReady || before == null || n <= before) continue;
+      final last = b.chat.last;
+      if (last.fromMunicipality || cloud.viewingBarangay == b.id) continue;
+      final text = last.text.length > 90 ? '${last.text.substring(0, 90)}…' : last.text;
+      notify(
+        context,
+        text,
+        type: NotifyType.info,
+        title: tr('New message from Brgy. ${b.name}', 'Bagong mensahe mula sa Brgy. ${b.name}', 'Bag-o nga mensahe halin sa Brgy. ${b.name}'),
+        onTap: () {
+          if (mounted) _open(b);
+        },
+      );
+    }
+  }
+
+  void _onCloudError() {
+    final m = cloud.errors.value;
+    if (m == null || !mounted) return;
+    toast(context, m, type: NotifyType.error, title: tr('Not saved online', 'Hindi na-save online', 'Wala na-save online'));
+    cloud.errors.value = null;
+  }
+
+  /// Runs a Firebase action; shows a red pop-up if it fails. Returns false on failure.
+  Future<bool> _cloud(Future<void> Function() action) async {
+    if (!cloud.isMunicipal) return true;
+    try {
+      await action();
+      return true;
+    } catch (e) {
+      if (mounted) toast(context, Cloud.friendly(e), type: NotifyType.error, title: tr('Not saved online', 'Hindi na-save online', 'Wala na-save online'));
+      return false;
+    }
+  }
+
+  @override
+  void dispose() {
+    cloud.changes.removeListener(_onCloudChange);
+    cloud.errors.removeListener(_onCloudError);
+    super.dispose();
+  }
+
   @override
   void initState() {
     super.initState();
-    // New messages from barangays: tap the pop-up to open that barangay's messages
-    WidgetsBinding.instance.addPostFrameCallback((_) {
+    cloud.changes.addListener(_onCloudChange);
+    cloud.errors.addListener(_onCloudError);
+    // New messages from barangays: tap the pop-up to open that barangay's messages.
+    // With Firebase, wait a moment so the messages have arrived.
+    Future.delayed(Duration(milliseconds: cloud.isMunicipal ? 2500 : 0), () {
+      // From now on, new messages get their own pop-up
+      for (final b in brgys) {
+        _chatSeen[b] = b.chat.length;
+      }
+      _chatReady = true;
       if (!mounted || unreadTotal == 0) return;
       final from = brgys.where((b) => b.unreadMuni > 0).toList()..sort((a, b) => b.unreadMuni.compareTo(a.unreadMuni));
       final one = from.length == 1;
@@ -109,6 +173,8 @@ class _MunicipalPageState extends State<MunicipalPage> {
       danger: true,
     );
     if (!ok || !mounted) return;
+    await cloud.signOut();
+    if (!mounted) return;
     toast(context, tr('You have signed out.', 'Naka-sign out ka na.', 'Naka-sign out ka na.'), type: NotifyType.info,
         title: tr('Signed out', 'Naka-sign out', 'Naka-sign out'));
     Navigator.of(context).pushReplacement(MaterialPageRoute(builder: (_) => const AuthPage()));
@@ -133,14 +199,16 @@ class _MunicipalPageState extends State<MunicipalPage> {
       icon: Icons.notifications_active_outlined,
     );
     if (!ok || !mounted) return;
-    setState(() {
-      for (final b in list) {
-        b.post(
-          fromMunicipality: true,
-          text: 'Reminder: please finish your documents, upload the signed copies, and bring the paper set to the MLGOO office.',
-        );
-      }
-    });
+    const text = 'Reminder: please finish your documents, upload the signed copies, and bring the paper set to the MLGOO office.';
+    if (cloud.isMunicipal) {
+      if (!await _cloud(() => cloud.remind(list, text)) || !mounted) return; // FIREBASE: arrives through the live chat
+    } else {
+      setState(() {
+        for (final b in list) {
+          b.post(fromMunicipality: true, text: text);
+        }
+      });
+    }
     toast(
       context,
       tr('Reminder sent to ${list.length} barangay${list.length == 1 ? '' : 's'}.',
@@ -294,12 +362,13 @@ class _MunicipalPageState extends State<MunicipalPage> {
       }),
     );
     if (ok != true || !mounted) return;
+    if (!await _cloud(cloud.submitToOppdc) || !mounted) return; // FIREBASE: needs every barangay verified
     setState(() {
       store.sentToOppdc = true;
       store.sentOn = nowLabel();
       for (final b in brgys) {
         b.status = BrgyStatus.sentToOppdc;
-        b.post(
+        if (!cloud.isMunicipal) b.post(
           fromMunicipality: true,
           system: true,
           text: 'All barangays’ paper sets were brought to OPPDC. OPPDC can also open your uploaded copies.',
@@ -400,7 +469,7 @@ class _MunicipalPageState extends State<MunicipalPage> {
                 overflow: TextOverflow.ellipsis, style: sans(13.5, color: C.muted)),
           ]),
         ),
-        if (kDemoMode) ...[
+        if (kDemoMode && !cloud.isMunicipal) ...[
           PopupMenuButton<String>(
             tooltip: 'Demo',
             offset: const Offset(0, 46),

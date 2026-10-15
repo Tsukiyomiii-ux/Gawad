@@ -5,6 +5,7 @@ import 'package:tanod_incentives/theme.dart';
 import 'package:tanod_incentives/widgets/notify.dart'; // top pop-ups
 import 'package:tanod_incentives/widgets/id_fields.dart'; // PhilSys ID field + ID photo picker
 import 'package:tanod_incentives/data/demo_data.dart';
+import 'package:tanod_incentives/data/scan_settings.dart'; // address / birthday on or off
 import 'package:tanod_incentives/widgets/app_field.dart';
 // MERGE: real scanners instead of the mock reader
 import 'package:tanod_incentives/Scanner/id_capture.dart';
@@ -157,7 +158,7 @@ class _ScanFlowPageState extends State<ScanFlowPage> with SingleTickerProviderSt
       idType,
       // MERGE: keep what the scanner gave us (photos for the ID photocopy sheet)
       suffix: manual || s == null ? '' : s.suffix.trim().toUpperCase(),
-      scannedAddress: manual || s == null ? '' : s.rawAddress,
+      scannedAddress: manual || s == null || !kCollectAddress ? '' : s.rawAddress,
       idFront: manual ? _manualFront : s?.idFront,
       idBack: manual ? _manualBack : s?.idBack,
     );
@@ -371,10 +372,12 @@ class _ScanFlowPageState extends State<ScanFlowPage> with SingleTickerProviderSt
                 style: sans(15, color: C.muted, h: 1.5)),
             const SizedBox(height: 22),
             point(Icons.text_fields_rounded, 'Only what the documents need',
-                'The name is kept. The address is only used to check the barangay. '
-                    'The PhilSys number and birth date are not kept.'),
-            point(Icons.phone_android_rounded, 'Photos stay on this phone',
-                'ID photos are not uploaded unless your municipality approves it.'),
+                kCollectAddress
+                    ? 'The name is kept. The address is only used to check the barangay. '
+                        'The PhilSys number and birth date are not kept.'
+                    : 'Only the name is kept. The address, birth date and PhilSys number are not kept.'),
+            point(Icons.photo_library_outlined, 'ID photos for the photocopy sheet',
+                'The front and back photos are saved to your barangay’s Gawad account, only for the ID photocopy sheet.'),
             point(Icons.fact_check_outlined, 'You always check first',
                 'Nothing goes into a document until you confirm it against the original ID.'),
             point(Icons.gavel_rounded, 'Data Privacy Act of 2012',

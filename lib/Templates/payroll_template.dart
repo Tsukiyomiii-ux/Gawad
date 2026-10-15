@@ -37,6 +37,10 @@ class TanodPerson {
 
   bool get hasIdPhotos => idFront != null && idBack != null;
 
+  /// FIREBASE: the tanod's fixed award number (from the barangay's block).
+  /// Null in demo mode → the PDFs number the rows 1, 2, 3…
+  final int? awardNumber;
+
   TanodPerson({
     required this.pcn,
     required this.firstName,
@@ -54,6 +58,7 @@ class TanodPerson {
     this.scannedByOcr = false,
     this.homeBarangay = '',
     this.homeMunicipality = '',
+    this.awardNumber,
   });
 
   /// Built from the OCR scanner. Birthday and address are read from the card
@@ -266,7 +271,9 @@ Future<Uint8List> generatePayrollPdf({
                     ),
                     // Claimant Records for this Barangay
                     ...members.map((tanod) {
-                      final awardNum = '${runningAwardNumber++}';
+                      // FIREBASE: the tanod's fixed award number when saved online
+                      final running = runningAwardNumber++;
+                      final awardNum = '${tanod.awardNumber ?? running}';
                       return pw.Container(
                         decoration: const pw.BoxDecoration(
                           border: pw.Border(

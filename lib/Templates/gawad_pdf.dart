@@ -16,7 +16,9 @@ import 'id_photocopy.dart';
 import 'package:tanod_incentives/widgets/notify.dart'; // top pop-ups
 import 'package:tanod_incentives/widgets/save_file.dart'; // direct download
 
-Future<Uint8List> buildOfficialPdf(BrgyRecord rec, DocKind kind) {
+/// [captain]: a Punong Barangay name typed in Documents → Edit but not saved yet
+/// (so the preview can show it). Defaults to the saved name.
+Future<Uint8List> buildOfficialPdf(BrgyRecord rec, DocKind kind, {String? captain}) {
   final people = personsFor(rec);
   return switch (kind) {
     DocKind.payroll => generatePayrollPdf(
@@ -31,7 +33,7 @@ Future<Uint8List> buildOfficialPdf(BrgyRecord rec, DocKind kind) {
     // Only this account's own certificate gets its Punong Barangay's name.
     DocKind.certification => generateCertificationPdf(
         tanodList: people,
-        punongBarangay: rec.captain,
+        punongBarangay: captain ?? rec.captain,
         signingBarangay: rec.name,
       ),
     DocKind.idSheet => IdPhotocopy.buildAll(tanodList: people),

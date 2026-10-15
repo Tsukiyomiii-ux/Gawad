@@ -47,6 +47,7 @@ TanodPerson personFromTanod(Tanod t, BrgyRecord rec) {
     homeMunicipality: home.municipality,
     idFront: t.idFront,
     idBack: t.idBack,
+    awardNumber: t.awardNumber, // FIREBASE: fixed number (null in demo mode)
   );
 }
 

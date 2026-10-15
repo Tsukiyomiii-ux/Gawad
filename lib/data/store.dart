@@ -18,8 +18,9 @@ import 'package:tanod_incentives/theme.dart';
 import 'package:tanod_incentives/data/demo_data.dart';
 import 'package:tanod_incentives/data/doc_kind.dart';
 
-const kReviewerName = 'Liza M. Tolentino';
-const kReviewerFirstName = 'Liza';
+// Demo reviewer; replaced by the signed-in municipal account (data/cloud.dart)
+var kReviewerName = 'Liza M. Tolentino';
+var kReviewerFirstName = 'Liza';
 
 enum BrgyStatus { notStarted, preparing, submitted, corrections, checked, sentToOppdc, released }
 
@@ -55,6 +56,9 @@ class DocFile {
   String? fileName;
   bool isPdf = false;
 
+  // FIREBASE: the reviewer's correction message for this document (tags it in the chat)
+  String? note;
+
   DocFile(this.kind);
 
   bool get uploaded => version > 0;
@@ -83,9 +87,13 @@ class AccountRequest {
 }
 
 class BrgyRecord {
-  final String name;
+  String name; // not final: replaced by the real barangay name after sign-in
+
+  // FIREBASE: barangay PSGC code and its status there (in_progress, submitted, returned, verified)
+  String? id;
+  String? cloudStatus;
   String rep, position, captain;
-  final int quota;
+  int quota; // not final: Firebase tanodLimit
   final List<Tanod> tanods;
   final Map<DocKind, DocFile> files;
   final List<ChatMsg> chat;

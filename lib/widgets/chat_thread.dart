@@ -118,32 +118,13 @@ class ChatThreadState extends State<ChatThread> {
               label: Text(label, style: sans(14, color: C.navy)),
               backgroundColor: Colors.white,
               side: const BorderSide(color: C.line),
-              onPressed: () => compose(doc ?? about, text),
+              onPressed: () => compose(null, text), // fills in the text only
             ),
         ]),
         const SizedBox(height: 12),
       ],
-      Text(tr('About', 'Tungkol sa', 'Parte sa'), style: sans(14, w: FontWeight.w700, color: C.muted)),
-      const SizedBox(height: 6),
-      Wrap(spacing: 6, runSpacing: 6, children: [
-        _aboutChip(null, tr('General', 'Pangkalahatan', 'Kabilugan')),
-        for (final k in DocKind.values) _aboutChip(k, k.title),
-      ]),
-      if (about != null && widget.asMunicipality) ...[
-        const SizedBox(height: 8),
-        Row(children: [
-          const Icon(Icons.flag_outlined, size: 17, color: C.red),
-          const SizedBox(width: 6),
-          Expanded(
-            child: Text(
-              tr('Sending this asks the barangay to correct the ${about!.title} and upload the corrected copy.',
-                  'Hihilingin nito sa barangay na itama ang ${about!.title} at i-upload ang naitamang kopya.',
-                  'Ipangayo sini sa barangay nga tadlungon ang ${about!.title} kag i-upload ang natadlong nga kopya.'),
-              style: sans(13.5, color: C.red, h: 1.4),
-            ),
-          ),
-        ]),
-      ],
+      // ("About" document chips removed: corrections are sent from each document's
+      //  "Something's wrong" button on the checking page instead)
       const SizedBox(height: 10),
       Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
         Expanded(
@@ -177,19 +158,6 @@ class ChatThreadState extends State<ChatThread> {
         ),
       ]),
     ]);
-  }
-
-  Widget _aboutChip(DocKind? k, String label) {
-    final on = about == k;
-    return ChoiceChip(
-      label: Text(label, style: sans(14, w: FontWeight.w600, color: on ? Colors.white : C.navy)),
-      selected: on,
-      showCheckmark: false,
-      selectedColor: C.navy,
-      backgroundColor: Colors.white,
-      side: BorderSide(color: on ? C.navy : C.line),
-      onSelected: (_) => setState(() => about = k),
-    );
   }
 
   Widget _bubble(ChatMsg m) {
