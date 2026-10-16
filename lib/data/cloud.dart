@@ -88,6 +88,25 @@ class Cloud {
     }
   }
 
+  /// KEEP ME SIGNED IN: when the app opens, picks up whoever is still signed in
+  /// on this device (Firebase remembers the login until Sign out). Works
+  /// offline with the data saved on the device. Returns the role, or null.
+  Future<String?> restore() async {
+    if (!firebaseReady) return null;
+    try {
+      final p = await auth.restoreSession().timeout(const Duration(seconds: 12));
+      if (p == null) return null;
+      profile = p;
+      if (role == 'barangay') await _openBarangay().timeout(const Duration(seconds: 25));
+      if (role == 'municipal') await _openMunicipal().timeout(const Duration(seconds: 25));
+      return role;
+    } catch (e) {
+      debugPrint('Could not restore the sign-in: $e');
+      profile = null;
+      return null;
+    }
+  }
+
   Future<void> signOut() async {
     await _stop();
     if (!live) return;
@@ -868,7 +887,17 @@ class Cloud {
 
   void _error(String m) => errors.value = m;
 
-  void _onStreamError(Object e) => _error(friendly(e));
+  /// A live READ that the rules don't allow is usually something that doesn't
+  /// exist yet for this account (e.g. no message thread made for a new
+  /// barangay). It changes nothing on screen, so it is only logged.
+  /// Failed SAVES still show the red "Not saved online" pop-up.
+  void _onStreamError(Object e) {
+    if (e is FirebaseException && e.code == 'permission-denied') {
+      debugPrint('Live read not allowed (ignored): ${e.message}');
+      return;
+    }
+    _error(friendly(e));
+  }
 
   /// SYNC CHIP: saves sent to Firebase but not confirmed by the server yet
   /// (offline they stay here until the internet is back).

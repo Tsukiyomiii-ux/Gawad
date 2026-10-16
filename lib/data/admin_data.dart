@@ -577,7 +577,7 @@ class AdminData {
 // ======================= STAGE (same names as the barangay's Submission status) =======================
 
 /// 0 Not Started · 1 Enroute to Municipality · 2 Received at the Municipality
-/// 3 Enroute to OPPDC · 4 Incentive Released
+/// 3 Enroute to OPPDC · 4 Received by OPPDC
 int brgyStage(AdminBrgy b) {
   if (b.status == Status.submitted || b.status == Status.returned) return 1;
   if (b.status != Status.verified) return 0;
@@ -592,5 +592,5 @@ const kStageNames = [
   'Enroute to Municipality',
   'Received at the Municipality',
   'Enroute to OPPDC',
-  'Incentive Released',
+  'Received by OPPDC',
 ];

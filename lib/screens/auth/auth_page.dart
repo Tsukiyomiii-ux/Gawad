@@ -2,6 +2,11 @@ import 'package:flutter/material.dart';
 
 import 'package:tanod_incentives/theme.dart';
 import 'login_form.dart';
+import 'package:tanod_incentives/data/cloud.dart'; // keep me signed in
+import 'package:tanod_incentives/data/admin_data.dart';
+import 'package:tanod_incentives/screens/dashboard/dashboard_page.dart';
+import 'package:tanod_incentives/screens/municipal/municipal_page.dart';
+import 'package:tanod_incentives/screens/admin/admin_page.dart';
 
 class AuthPage extends StatefulWidget {
   const AuthPage({super.key});
@@ -10,8 +15,48 @@ class AuthPage extends StatefulWidget {
 }
 
 class _AuthPageState extends State<AuthPage> {
+  // KEEP ME SIGNED IN: someone still signed in on this device goes straight
+  // to their dashboard (also offline).
+  bool _restoring = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _restore();
+  }
+
+  Future<void> _restore() async {
+    final role = await cloud.restore();
+    if (!mounted) return;
+    if (role == null) {
+      setState(() => _restoring = false);
+      return;
+    }
+    if (role == 'admin') await admin.openLive();
+    if (!mounted) return;
+    Navigator.of(context).pushReplacement(MaterialPageRoute(
+      builder: (_) => switch (role) {
+        'barangay' => const DashboardPage(),
+        'admin' => const AdminPage(),
+        _ => const MunicipalPage(),
+      },
+    ));
+  }
+
   @override
   Widget build(BuildContext context) {
+    if (_restoring) {
+      return Scaffold(
+        backgroundColor: C.mist,
+        body: Center(
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            const SizedBox(width: 36, height: 36, child: CircularProgressIndicator(strokeWidth: 3)),
+            const SizedBox(height: 16),
+            Text('Opening Gawad…', style: sans(16, color: C.muted)),
+          ]),
+        ),
+      );
+    }
     final w = MediaQuery.of(context).size.width;
     final mobile = w <= 560;
     final heroH = mobile ? 370.0 : 400.0; // FIX: was 340 on phones

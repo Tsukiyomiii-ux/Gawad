@@ -111,22 +111,11 @@ class _LoginFormState extends State<LoginForm> {
           crossAxisAlignment: WrapCrossAlignment.center,
           runSpacing: 4,
           children: [
-            InkWell(
-              onTap: () => setState(() => keep = !keep),
-              child: Row(mainAxisSize: MainAxisSize.min, children: [
-                SizedBox(
-                  width: 24,
-                  height: 24,
-                  child: Checkbox(
-                    value: keep,
-                    activeColor: C.green,
-                    onChanged: (v) => setState(() => keep = v ?? false),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Text('Keep me signed in', style: sans(14)),
-              ]),
-            ),
+            Row(mainAxisSize: MainAxisSize.min, children: [
+              const Icon(Icons.verified_user_outlined, size: 18, color: C.green),
+              const SizedBox(width: 8),
+              Text('You stay signed in until you sign out', style: sans(14, color: C.muted)),
+            ]),
             TextButton(
               onPressed: () {},
               child: Text('Forgot password?', style: sans(14, w: FontWeight.w600, color: C.blue)),

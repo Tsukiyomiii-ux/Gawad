@@ -889,8 +889,8 @@ class _AdminPageState extends State<AdminPage> {
 
   Widget _documentsPage() {
     final passed = admin.allBrgys.where((b) => b.passed && b.tanods > 0).where((b) => switch (_docsFilter) {
-          'verified' => b.status == Status.verified,
-          'submitted' => b.status == Status.submitted,
+          'verified' => const [2, 4].contains(brgyStage(b)), // Received by the municipality or by OPPDC
+          'submitted' => const [1, 3].contains(brgyStage(b)), // Enroute to the municipality or to OPPDC
           _ => true,
         });
     final byTown = <String, List<AdminBrgy>>{};
@@ -923,8 +923,8 @@ class _AdminPageState extends State<AdminPage> {
       const SizedBox(height: 16),
       Wrap(spacing: 8, runSpacing: 8, children: [
         chip('all', 'All passed'),
-        chip('verified', 'Verified'),
-        chip('submitted', 'Waiting to be checked'),
+        chip('verified', 'Received'),
+        chip('submitted', 'Enroute'),
       ]),
       const SizedBox(height: 16),
       if (byTown.isEmpty) _empty('No barangay has passed its documents yet.'),
